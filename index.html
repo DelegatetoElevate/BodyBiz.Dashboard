@@ -9715,6 +9715,15 @@ body{visibility:hidden}
         <option value="green">🟢 On Track</option>
         <option value="unset">Not Set</option>
       </select>
+      <select class="form-input" id="pulse_freshness" style="width:150px;font-size:12px;padding:6px 10px" onchange="renderPulse()">
+        <option value="all">Any last update</option>
+        <option value="stale">⚠ Needs update</option>
+        <option value="never">Never updated</option>
+        <option value="7">Updated 7d+ ago</option>
+        <option value="14">Updated 14d+ ago</option>
+        <option value="30">Updated 30d+ ago</option>
+        <option value="recent">Updated this week</option>
+      </select>
     </div>
   </div>
 
@@ -9745,6 +9754,9 @@ body{visibility:hidden}
       <div class="kpi-sub">coach hasn't updated yet</div>
     </div>
   </div>
+
+  <!-- Update coverage: how well statuses are being kept current -->
+  <div id="pulseCoverage" style="margin-bottom:18px"></div>
 
   <!-- Client cards -->
   <div id="pulseCards">
@@ -12089,6 +12101,38 @@ async function syncPulseFromServer(){
 }
 // pulseData = { clientId: { status: 'green'|'yellow'|'red', note: '', updatedBy: '', updatedAt: '' } }
 
+// ============================================================
+// PULSE FRESHNESS
+// How many days before a status is considered stale. Single source of
+// truth — change this one number to adjust the whole dashboard.
+// (Pending confirmation from Luke on the right threshold.)
+// ============================================================
+const PULSE_STALE_DAYS = 14;
+
+// Days since a client's pulse was last updated. Returns null if never set.
+function pulseAgeDays(clientId){
+  const pd = pulseData[clientId];
+  if(!pd) return null;
+  const iso = pd.updatedAtIso || (/^\d{4}-\d{2}-\d{2}/.test(pd.updatedAt||'') ? pd.updatedAt : null);
+  if(!iso) return null;
+  const then = new Date(iso);
+  if(isNaN(then)) return null;
+  return Math.floor((Date.now() - then.getTime()) / 86400000);
+}
+function isPulseStale(clientId){
+  const age = pulseAgeDays(clientId);
+  return age === null || age >= PULSE_STALE_DAYS;
+}
+// "3d ago" / "Never" / "21d ago — stale", coloured by urgency.
+function pulseFreshnessLabel(clientId){
+  const age = pulseAgeDays(clientId);
+  if(age === null) return `<span style="font-size:10px;color:var(--sub);font-style:italic">Never updated</span>`;
+  const stale = age >= PULSE_STALE_DAYS;
+  const col = stale ? 'var(--orange)' : 'var(--sub)';
+  const txt = age === 0 ? 'today' : age === 1 ? 'yesterday' : `${age}d ago`;
+  return `<span style="font-size:10px;color:${col}">Updated ${txt}${stale?' · stale':''}</span>`;
+}
+
 let pulseCurrentId = null;
 let pulseCurrentStatus = null;
 
@@ -12154,12 +12198,18 @@ function selectPulseStatus(status){
 function savePulseStatus(){
   if(!pulseCurrentId) return;
   const note = document.getElementById('pulseNote').value.trim();
+  const nowIso = new Date().toISOString();
   const now = new Date().toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
   const status = pulseCurrentStatus || 'green';
   pulseData[pulseCurrentId] = {
     status,
     note,
-    updatedAt: now
+    updatedAt: now,
+    // Machine-readable copy. updatedAt is a localised display string
+    // ("12 Aug 2026") which can't be compared or sorted reliably, so
+    // freshness calculations use this instead.
+    updatedAtIso: nowIso,
+    updatedBy: (currentUser && currentUser.name) || ''
   };
   savePulseData();
   fetch('/api/pulse',{
@@ -12180,9 +12230,21 @@ function closePulseModal(){
 function renderPulse(){
   const coachFilter = document.getElementById('pulse_coach')?.value || 'all';
   const statusFilter = document.getElementById('pulse_filter')?.value || 'all';
+  const freshFilter = document.getElementById('pulse_freshness')?.value || 'all';
 
   // Determine which coach to filter by
   const forceCoach = (currentUser && currentUser.role==='coach') ? currentUser.coach : null;
+
+  const matchesFreshness = (id) => {
+    if(freshFilter==='all') return true;
+    const age = pulseAgeDays(id);
+    if(freshFilter==='never') return age===null;
+    if(freshFilter==='stale') return isPulseStale(id);
+    if(freshFilter==='recent') return age!==null && age < 7;
+    const n = parseInt(freshFilter,10);
+    if(!isNaN(n)) return age===null || age >= n;
+    return true;
+  };
 
   const active = clients.filter(c=>c.status==='active');
   // Everything this user is allowed to see. A coach only ever sees their own
@@ -12191,6 +12253,7 @@ function renderPulse(){
   const visible = forceCoach ? active.filter(c=>c.coach===forceCoach) : active;
   const filtered = visible.filter(c=>{
     if(!forceCoach && coachFilter!=='all' && c.coach!==coachFilter) return false;
+    if(!matchesFreshness(c.id)) return false;
     const pd = pulseData[c.id];
     const s = pd?.status || 'unset';
     if(statusFilter==='all') return true;
@@ -12212,12 +12275,47 @@ function renderPulse(){
   setText('pulse_green', counts.green||0);
   setText('pulse_unset', counts.unset||0);
 
-  // Sort: red first, then yellow, then green, then unset
+  // ---- Update coverage -------------------------------------------------
+  // How well statuses are being kept current for the clients in view. This
+  // is what stops Pulse quietly going stale and becoming decorative.
+  const cov = document.getElementById('pulseCoverage');
+  if(cov){
+    const total = countBase.length;
+    const fresh = countBase.filter(c=>{const a=pulseAgeDays(c.id);return a!==null && a<PULSE_STALE_DAYS;}).length;
+    const staleN = countBase.filter(c=>pulseAgeDays(c.id)!==null && isPulseStale(c.id)).length;
+    const neverN = countBase.filter(c=>pulseAgeDays(c.id)===null).length;
+    const pct = total ? Math.round(fresh/total*100) : 0;
+    const barCol = pct>=80?'var(--green)':pct>=50?'var(--yellow)':'var(--red)';
+    const needs = staleN + neverN;
+    cov.innerHTML = total ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+          <div style="font-size:12px;color:var(--sub)">
+            <span style="color:var(--white);font-weight:600">${fresh}/${total}</span> updated in the last ${PULSE_STALE_DAYS} days
+          </div>
+          ${needs?`<button onclick="document.getElementById('pulse_freshness').value='stale';renderPulse()" style="background:none;border:1px solid var(--orange);border-radius:4px;padding:5px 12px;color:var(--orange);font-size:11px;cursor:pointer;font-weight:600">
+            ${needs} need${needs===1?'s':''} an update →
+          </button>`:`<span style="font-size:11px;color:var(--green);font-weight:600">✓ All current</span>`}
+        </div>
+        <div style="height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${barCol};border-radius:3px;transition:width .3s"></div>
+        </div>
+        ${needs?`<div style="font-size:10px;color:var(--sub);margin-top:6px">${neverN} never set · ${staleN} not updated in ${PULSE_STALE_DAYS}+ days</div>`:''}
+      </div>` : '';
+  }
+
+  // Sort: red first, then yellow, then green, then unset — and within each
+  // group, the most overdue for an update first, so the people most likely
+  // to be slipping through the cracks surface at the top.
   const ORDER = {red:0,yellow:1,green:2,unset:3};
   const sorted = [...filtered].sort((a,b)=>{
     const sa = pulseData[a.id]?.status||'unset';
     const sb = pulseData[b.id]?.status||'unset';
-    return (ORDER[sa]||3)-(ORDER[sb]||3);
+    const d = (ORDER[sa]||3)-(ORDER[sb]||3);
+    if(d !== 0) return d;
+    const aa = pulseAgeDays(a.id), ab = pulseAgeDays(b.id);
+    // never-updated counts as most stale
+    return (ab===null?Infinity:ab) - (aa===null?Infinity:aa);
   });
 
   if(!sorted.length){
@@ -12260,7 +12358,7 @@ function renderPulse(){
               </div>
               <div style="margin-bottom:6px">${igLink(c.instagram)}</div>
               ${pd.note?`<div style="font-size:12px;color:var(--white);background:var(--surface);border-radius:4px;padding:6px 8px;margin-bottom:6px">${pd.note}</div>`:''}
-              ${pd.updatedAt?`<div style="font-size:10px;color:var(--sub)">Updated ${pd.updatedAt}</div>`:`<div style="font-size:10px;color:var(--sub);font-style:italic">Tap to set status</div>`}
+              ${pd.updatedAt?`<div>${pulseFreshnessLabel(c.id)}${pd.updatedBy?`<span style="font-size:10px;color:var(--sub)"> · ${pd.updatedBy}</span>`:''}</div>`:`<div style="font-size:10px;color:var(--sub);font-style:italic">Tap to set status</div>`}
             </div>`;
           }).join('')}
         </div>
