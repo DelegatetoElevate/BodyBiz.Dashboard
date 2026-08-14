@@ -12079,9 +12079,14 @@ const PULSE_BORDER = { green:'var(--green)', yellow:'var(--yellow)', red:'var(--
 function savePulseData(){ localStorage.setItem('bb_pulse', JSON.stringify(pulseData)); }
 
 function openPulseModal(clientId){
-  pulseCurrentId = clientId;
   const c = clients.find(x=>x.id===clientId);
   if(!c) return;
+  // Defence in depth: a coach can only ever open their own clients. The card
+  // list is already filtered, so this can't be hit through normal use — but
+  // it stops the modal being opened directly (e.g. via the console) for a
+  // client belonging to someone else. The server enforces this too, on save.
+  if(currentUser && currentUser.role==='coach' && c.coach!==currentUser.coach) return;
+  pulseCurrentId = clientId;
   const existing = pulseData[clientId] || {};
   pulseCurrentStatus = existing.status || null;
 
@@ -12151,8 +12156,11 @@ function renderPulse(){
   const forceCoach = (currentUser && currentUser.role==='coach') ? currentUser.coach : null;
 
   const active = clients.filter(c=>c.status==='active');
-  const filtered = active.filter(c=>{
-    if(forceCoach && c.coach!==forceCoach) return false;
+  // Everything this user is allowed to see. A coach only ever sees their own
+  // clients; admin sees all. The status filter (red/yellow/green) is applied
+  // separately below, so the summary counters stay stable while filtering.
+  const visible = forceCoach ? active.filter(c=>c.coach===forceCoach) : active;
+  const filtered = visible.filter(c=>{
     if(!forceCoach && coachFilter!=='all' && c.coach!==coachFilter) return false;
     const pd = pulseData[c.id];
     const s = pd?.status || 'unset';
@@ -12160,9 +12168,13 @@ function renderPulse(){
     return s===statusFilter;
   });
 
-  // Counts
+  // Counts — scoped to what this user can see, and respecting the admin's
+  // coach dropdown, so the numbers always match the list underneath.
+  const countBase = (!forceCoach && coachFilter!=='all')
+    ? visible.filter(c=>c.coach===coachFilter)
+    : visible;
   const counts = {red:0,yellow:0,green:0,unset:0};
-  active.forEach(c=>{
+  countBase.forEach(c=>{
     const s = pulseData[c.id]?.status || 'unset';
     counts[s]=(counts[s]||0)+1;
   });
