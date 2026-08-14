@@ -12027,7 +12027,13 @@ function showPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+id).classList.add('active');
-  document.querySelectorAll('.nav-tab').forEach(t=>{if(t.textContent.toLowerCase().trim()===id)t.classList.add('active');});
+  document.querySelectorAll('.nav-tab').forEach(t=>{
+    // Match on the page the tab actually navigates to, not its label text.
+    // Text matching breaks for tabs containing extra content — e.g. Sales
+    // has a count badge ("Sales 9") and Touch Points/Client Pulse have emoji.
+    const m = (t.getAttribute('onclick')||'').match(/showPage\(['"]([^'"]+)['"]\)/);
+    if(m && m[1]===id) t.classList.add('active');
+  });
   if(id==='sales')renderSalesPage();
   if(id==='revenue')renderRevenuePage();
   if(id==='growth'){
