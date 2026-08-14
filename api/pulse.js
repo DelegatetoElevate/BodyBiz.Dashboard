@@ -116,10 +116,14 @@ export default async function handler(request) {
 
       const pulseResult = await kvCommand(['GET', PULSE_KEY]);
       const pulseData = pulseResult && pulseResult.result ? JSON.parse(pulseResult.result) : {};
+      const nowIso = new Date().toISOString();
       pulseData[clientId] = {
         status,
         note: note || '',
-        updatedAt: new Date().toISOString(),
+        // Display string for the UI, plus a machine-readable copy used for
+        // freshness/staleness calculations and sorting.
+        updatedAt: new Date(nowIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }),
+        updatedAtIso: nowIso,
         updatedBy: identity.name,
       };
       await kvCommand(['SET', PULSE_KEY, JSON.stringify(pulseData)]);
