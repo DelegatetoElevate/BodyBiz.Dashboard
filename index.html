@@ -10888,9 +10888,10 @@ const SYM={AUD:'A$',USD:'US$',CAD:'C$',EUR:'€',NZD:'NZ$',GBP:'£'};
 
 async function loadFX(){
   try{
-    const r=await fetch('https://api.exchangerate-api.com/v4/latest/AUD');
+    const r=await fetch('https://open.er-api.com/v6/latest/AUD');
     if(!r.ok)throw 0;
     const d=await r.json();
+    if(d.result!=='success'||!d.rates)throw 0;
     FX={AUD:1,USD:d.rates.USD,CAD:d.rates.CAD,EUR:d.rates.EUR,NZD:d.rates.NZD,GBP:d.rates.GBP};
     document.getElementById('fxStatus').innerHTML=`Live · <span class="fx-rate">1 AUD = ${FX.USD.toFixed(4)} USD · ${FX.CAD.toFixed(4)} CAD · ${FX.EUR.toFixed(4)} EUR · ${FX.NZD.toFixed(4)} NZD</span>`;
   }catch(e){
