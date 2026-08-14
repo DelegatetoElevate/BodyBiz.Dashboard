@@ -274,7 +274,7 @@ body{visibility:hidden}
 </header>
 
 <!-- ======================== OVERVIEW ======================== -->
-<div class="page" id="page-overview"><div class="wrap">
+<div class="page active" id="page-overview"><div class="wrap">
   <div class="fx-alert" id="fxAlert" style="display: none;">⚠ Live rates unavailable — using fallback rates.</div>
   <div class="currency-strip" id="currencyStrip"><div class="cx-card">
       <span class="cx-flag">🇦🇺</span>
@@ -1666,7 +1666,7 @@ body{visibility:hidden}
 </div></div>
 
 <!-- ======================== SALES ======================== -->
-<div class="page active" id="page-sales"><div class="wrap">
+<div class="page" id="page-sales"><div class="wrap">
       <!-- FOLLOW UP REMINDERS -->
       <div id="followUpSection" style="margin-bottom:28px">
         <div class="card-header" style="margin-bottom:14px">
@@ -12746,6 +12746,12 @@ syncFromServer().then(function(){
   sanitiseDates();
   loadFX();
   syncPulseFromServer();
+  // Explicitly initialise the view. Without this the app just displays
+  // whichever page happened to carry class="page active" in the saved HTML,
+  // showing that page's *stale exported markup* rather than content rendered
+  // from current data — and no nav tab appears selected. applyAccessLevel()
+  // overrides this to 'pulse' for coach logins.
+  if(!currentUser || currentUser.role === 'admin') showPage('overview');
 });
 
 
