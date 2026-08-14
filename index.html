@@ -226,7 +226,12 @@ td{padding:10px 13px;font-size:13px;vertical-align:middle}
 #coachBanner.visible { display:flex; }
 
 </style>
-</head>
+</head><style>
+/* Hidden by default until the coach/admin access level has been applied,
+   below in the main script — prevents any flash of admin-only content
+   for restricted (coach) logins, even for a single frame. */
+body{visibility:hidden}
+</style>
 <body>
 
 <!-- ============ LOGIN SCREEN ============ -->
@@ -12715,7 +12720,6 @@ syncFromServer().then(function(){
   sanitiseDates();
   loadFX();
   syncPulseFromServer();
-  setTimeout(applyAccessLevel, 300);
 });
 
 
@@ -12770,6 +12774,12 @@ function applyAccessLevel() {
 }
 
 currentUser = readIdentityCookie();
+// Apply the coach/admin restriction synchronously, right now — this runs
+// before the browser has a chance to paint anything (it's still part of
+// the same blocking script execution that parsed this whole page), so a
+// coach login never renders the full admin dashboard even for a frame.
+applyAccessLevel();
+document.body.style.visibility = 'visible';
 
 </script>
 
