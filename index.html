@@ -12732,6 +12732,13 @@ function applyAccessLevel() {
   const headerBtns = document.querySelectorAll('header button, .header-actions, .fx-bar');
   headerBtns.forEach(b => b.style.display = 'none');
 
+  // Hide the "All Coaches" filter on Client Pulse — a coach only ever
+  // sees their own clients anyway (enforced server-side), so filtering
+  // by coach is meaningless for this account. The status filter
+  // (All/Red/Yellow/Green/Not Set) stays, since that's still useful.
+  const coachFilterEl = document.getElementById('pulse_coach');
+  if (coachFilterEl) coachFilterEl.style.display = 'none';
+
   // Navigate to pulse tab (server has already filtered `clients` to just
   // this coach's own clients, so no extra client-side filtering is needed)
   showPage('pulse');
