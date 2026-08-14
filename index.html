@@ -9727,6 +9727,7 @@ body{visibility:hidden}
         <option value="30">Updated 30d+ ago</option>
         <option value="recent">Updated this week</option>
       </select>
+      <button class="btn btn-ghost" onclick="exportPulseCSV()" style="font-size:12px;padding:6px 12px">⬇ Export CSV</button>
     </div>
   </div>
 
@@ -11502,19 +11503,7 @@ function renderLTVPage(){
 let sortKey='name',sortAsc=true;
 function sortBy(k){sortKey===k?sortAsc=!sortAsc:((sortKey=k),(sortAsc=true));renderClientTable();}
 function renderClientTable(){
-  const q=(document.getElementById('clientSearch')?.value||'').toLowerCase();
-  const fs=document.getElementById('filterStatus')?.value||'';
-  const fc=document.getElementById('filterCoach')?.value||'';
-  const fcx=document.getElementById('filterCurrency')?.value||'';
-  const fsrc=document.getElementById('filterSource')?.value||'';
-  let list=clients.filter(c=>{
-    if(q&&!(c.name.toLowerCase().includes(q)||normaliseHandle(c.instagram).toLowerCase().includes(q)))return false;
-    if(fs&&c.status!==fs)return false;
-    if(fc&&c.coach!==fc)return false;
-    if(fcx&&(c.currency||'AUD')!==fcx)return false;
-    if(fsrc&&(c.source||'Other')!==fsrc)return false;
-    return true;
-  });
+  let list=getFilteredClients();
   list.sort((a,b)=>{
     let av=sortKey==='rate'?rateAUD(a):a[sortKey]??'';
     let bv=sortKey==='rate'?rateAUD(b):b[sortKey]??'';
@@ -11648,11 +11637,114 @@ function deleteClient(){
 // ============================================================
 // EXPORT
 // ============================================================
+// Returns the clients currently matching the Clients-tab filters. Shared by
+// the table and the CSV export so what you export is always exactly what
+// you're looking at.
+function getFilteredClients(){
+  const q=(document.getElementById('clientSearch')?.value||'').toLowerCase();
+  const fs=document.getElementById('filterStatus')?.value||'';
+  const fc=document.getElementById('filterCoach')?.value||'';
+  const fcx=document.getElementById('filterCurrency')?.value||'';
+  const fsrc=document.getElementById('filterSource')?.value||'';
+  return clients.filter(c=>{
+    if(q&&!(c.name.toLowerCase().includes(q)||normaliseHandle(c.instagram).toLowerCase().includes(q)))return false;
+    if(fs&&c.status!==fs)return false;
+    if(fc&&c.coach!==fc)return false;
+    if(fcx&&(c.currency||'AUD')!==fcx)return false;
+    if(fsrc&&(c.source||'Other')!==fsrc)return false;
+    return true;
+  });
+}
+
+// Shared CSV writer — quotes fields and escapes embedded quotes so notes
+// containing commas or quote marks don't break the columns.
+function downloadCSV(filename, header, rows){
+  const esc = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const csv = [header, ...rows].map(r=>r.map(esc).join(',')).join('\n');
+  const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
 function exportCSV(){
-  const h=['Name','Coach','Status','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes'];
-  const rows=clients.map(c=>[c.name,c.coach,c.status,c.currency||'AUD',c.rate,Math.round(rateAUD(c)),c.source||'',c.payment||'',c.resign||'no',c.start,c.end||'',monthsBetween(c.start,c.end),Math.round(totalPaidAUD(c)),Math.round(projLTV(c)),c.reason,c.notes]);
-  const csv=[h,...rows].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
-  const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='bodybiz-clients.csv';a.click();
+  const list = getFilteredClients();
+  if(!list.length){ alert('No clients match the current filters — nothing to export.'); return; }
+  const h=['Name','Instagram','Coach','Status','Pulse Status','Pulse Note','Pulse Last Updated','Days Since Pulse Update','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes'];
+  const PL={red:'At Risk',yellow:'Watch',green:'On Track'};
+  const rows=list.map(c=>{
+    const pd=pulseData[c.id]||{};
+    const age=pulseAgeDays(c.id);
+    return [
+      c.name, normaliseHandle(c.instagram)?'@'+normaliseHandle(c.instagram):'',
+      c.coach, c.status,
+      PL[pd.status]||'Not Set', pd.note||'', pd.updatedAt||'', age===null?'':age,
+      c.currency||'AUD', c.rate, Math.round(rateAUD(c)),
+      c.source||'', c.payment||'', c.resign||'no',
+      c.start, c.end||'', monthsBetween(c.start,c.end),
+      Math.round(totalPaidAUD(c)), Math.round(projLTV(c)),
+      c.reason, c.notes
+    ];
+  });
+  downloadCSV('bodybiz-clients-'+new Date().toISOString().slice(0,10)+'.csv', h, rows);
+}
+
+// Retention-focused export: who needs attention, with everything you'd want
+// in front of you to actually do something about it. Respects the Pulse
+// filters and the logged-in coach's permissions.
+function exportPulseCSV(){
+  const coachFilter = document.getElementById('pulse_coach')?.value || 'all';
+  const statusFilter = document.getElementById('pulse_filter')?.value || 'all';
+  const freshFilter = document.getElementById('pulse_freshness')?.value || 'all';
+  const forceCoach = (currentUser && currentUser.role==='coach') ? currentUser.coach : null;
+
+  const matchesFreshness = (id) => {
+    if(freshFilter==='all') return true;
+    const age = pulseAgeDays(id);
+    if(freshFilter==='never') return age===null;
+    if(freshFilter==='stale') return isPulseStale(id);
+    if(freshFilter==='recent') return age!==null && age < 7;
+    const n = parseInt(freshFilter,10);
+    if(!isNaN(n)) return age===null || age >= n;
+    return true;
+  };
+
+  const active = clients.filter(c=>c.status==='active');
+  const visible = forceCoach ? active.filter(c=>c.coach===forceCoach) : active;
+  const list = visible.filter(c=>{
+    if(!forceCoach && coachFilter!=='all' && c.coach!==coachFilter) return false;
+    if(!matchesFreshness(c.id)) return false;
+    const s = pulseData[c.id]?.status || 'unset';
+    if(statusFilter==='all') return true;
+    return s===statusFilter;
+  });
+  if(!list.length){ alert('No clients match the current filters — nothing to export.'); return; }
+
+  const PL={red:'At Risk',yellow:'Watch',green:'On Track'};
+  const ORDER={red:0,yellow:1,green:2,unset:3};
+  // Most urgent first: At Risk before Watch, and most overdue within each.
+  const sorted=[...list].sort((a,b)=>{
+    const d=(ORDER[pulseData[a.id]?.status||'unset'])-(ORDER[pulseData[b.id]?.status||'unset']);
+    if(d) return d;
+    const aa=pulseAgeDays(a.id), ab=pulseAgeDays(b.id);
+    return (ab===null?Infinity:ab)-(aa===null?Infinity:aa);
+  });
+
+  const h=['Status','Client','Instagram','Instagram URL','Coach','Days Since Pulse Update','Last Updated','Updated By','Coach Note','Months Active','Rate AUD/mo','Billing','Start Date'];
+  const rows=sorted.map(c=>{
+    const pd=pulseData[c.id]||{};
+    const age=pulseAgeDays(c.id);
+    const h2=normaliseHandle(c.instagram);
+    return [
+      PL[pd.status]||'Not Set', c.name,
+      h2?'@'+h2:'', h2?igUrl(h2):'',
+      c.coach, age===null?'Never':age, pd.updatedAt||'Never', pd.updatedBy||'',
+      pd.note||'', monthsBetween(c.start,null),
+      Math.round(rateAUD(c)), c.billing||'', c.start
+    ];
+  });
+  downloadCSV('bodybiz-client-pulse-'+new Date().toISOString().slice(0,10)+'.csv', h, rows);
 }
 
 function saveData(){
