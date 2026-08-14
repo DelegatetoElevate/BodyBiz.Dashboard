@@ -275,7 +275,7 @@ body{visibility:hidden}
 
 <!-- ======================== OVERVIEW ======================== -->
 <div class="page" id="page-overview"><div class="wrap">
-  <div class="fx-alert" id="fxAlert" style="display: block;">⚠ Live rates unavailable — using fallback rates.</div>
+  <div class="fx-alert" id="fxAlert" style="display: none;">⚠ Live rates unavailable — using fallback rates.</div>
   <div class="currency-strip" id="currencyStrip"><div class="cx-card">
       <span class="cx-flag">🇦🇺</span>
       <div class="cx-info">
@@ -10894,6 +10894,8 @@ async function loadFX(){
     if(d.result!=='success'||!d.rates)throw 0;
     FX={AUD:1,USD:d.rates.USD,CAD:d.rates.CAD,EUR:d.rates.EUR,NZD:d.rates.NZD,GBP:d.rates.GBP};
     document.getElementById('fxStatus').innerHTML=`Live · <span class="fx-rate">1 AUD = ${FX.USD.toFixed(4)} USD · ${FX.CAD.toFixed(4)} CAD · ${FX.EUR.toFixed(4)} EUR · ${FX.NZD.toFixed(4)} NZD</span>`;
+    document.getElementById('fxAlert').style.display='none';
+    document.querySelector('.live-dot').style.background='var(--green)';
   }catch(e){
     document.getElementById('fxAlert').style.display='block';
     document.getElementById('fxStatus').textContent='Fallback rates';
