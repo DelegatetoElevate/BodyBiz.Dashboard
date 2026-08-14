@@ -447,36 +447,6 @@ body{visibility:hidden}
       <div class="source-val" style="color:#ff5722">4</div>
     </div></div></div>
     </div>
-    <div class="card">
-      <div class="card-header"><div class="card-title">Quick Add Client</div></div>
-      <div class="card-body">
-        <div class="form-row full"><div class="form-group"><div class="form-label">Name</div><input class="form-input" id="q_name" placeholder="Client name"></div></div>
-        <div class="form-row">
-          <div class="form-group"><div class="form-label">Rate</div><input class="form-input" id="q_rate" type="number" placeholder="297"></div>
-          <div class="form-group"><div class="form-label">Billing Type</div>
-            <select class="form-input" id="q_billing">
-              <option value="monthly">Monthly</option>
-              <option value="weekly">Weekly</option>
-              <option value="pif_months">PIF</option>
-            </select></div>
-        </div>
-            <select class="form-input" id="q_currency">
-              <option value="AUD">🇦🇺 AUD</option><option value="USD">🇺🇸 USD</option>
-              <option value="CAD">🇨🇦 CAD</option><option value="EUR">🇪🇺 EUR</option><option value="NZD">🇳🇿 NZD</option><option value="GBP">🇬🇧 GBP</option>
-            </select></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><div class="form-label">Coach</div>
-            <select class="form-input" id="q_coach"><option>Luke</option><option>Tome</option><option>Kane</option><option>Stevan</option></select></div>
-          <div class="form-group"><div class="form-label">Source</div>
-            <select class="form-input" id="q_source">
-              <option value="Instagram Inbound">Instagram Inbound DM</option><option value="Instagram Outbound">Instagram Outbound DM</option>
-              <option value="Email">Email</option><option value="Referral">Referral</option>
-            </select></div>
-        </div>
-        <button class="btn btn-pink" style="width:100%" onclick="quickAdd()">Add Client</button>
-      </div>
-    </div>
   </div>
 
 
@@ -11634,15 +11604,6 @@ function saveClient(){
 function deleteClient(){
   if(!editingId||!confirm('Delete this client?'))return;
   clients=clients.filter(c=>c.id!==editingId);save();closeModal();renderAll();
-}
-function quickAdd(){
-  const name=document.getElementById('q_name').value.trim();if(!name){alert('Name required');return;}
-  clients.push({id:uid(),name,coach:document.getElementById('q_coach').value,status:'active',
-    currency:document.getElementById('q_currency').value,
-    start:new Date().toISOString().slice(0,10),end:null,
-    rate:parseFloat(document.getElementById('q_rate').value)||297,
-    payment:'Stripe',billing:document.getElementById('q_billing').value,source:document.getElementById('q_source').value,resign:'no',reason:'',notes:''});
-  document.getElementById('q_name').value='';save();renderAll();
 }
 
 // ============================================================
