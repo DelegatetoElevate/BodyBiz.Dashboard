@@ -9727,7 +9727,7 @@ body{visibility:hidden}
         <option value="30">Updated 30d+ ago</option>
         <option value="recent">Updated this week</option>
       </select>
-      <button class="btn btn-ghost" onclick="exportPulseCSV()" style="font-size:12px;padding:6px 12px">⬇ Export CSV</button>
+      <button class="btn btn-ghost" id="pulseExportBtn" onclick="exportPulseCSV()" style="font-size:12px;padding:6px 12px">⬇ Export CSV</button>
     </div>
   </div>
 
@@ -11694,6 +11694,9 @@ function exportCSV(){
 // in front of you to actually do something about it. Respects the Pulse
 // filters and the logged-in coach's permissions.
 function exportPulseCSV(){
+  // Admin-only. The button is hidden for coaches, but this also stops the
+  // function being run directly (e.g. from the browser console).
+  if(currentUser && currentUser.role !== 'admin') return;
   const coachFilter = document.getElementById('pulse_coach')?.value || 'all';
   const statusFilter = document.getElementById('pulse_filter')?.value || 'all';
   const freshFilter = document.getElementById('pulse_freshness')?.value || 'all';
@@ -12897,6 +12900,10 @@ function applyAccessLevel() {
   // (All/Red/Yellow/Green/Not Set) stays, since that's still useful.
   const coachFilterEl = document.getElementById('pulse_coach');
   if (coachFilterEl) coachFilterEl.style.display = 'none';
+
+  // Export is an admin tool — coaches work from the cards directly.
+  const pulseExportEl = document.getElementById('pulseExportBtn');
+  if (pulseExportEl) pulseExportEl.style.display = 'none';
 
   // Navigate to pulse tab (server has already filtered `clients` to just
   // this coach's own clients, so no extra client-side filtering is needed)
