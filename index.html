@@ -12265,10 +12265,11 @@ function openPulseModal(clientId){
         <div style="font-size:10px;color:var(--sub);margin-bottom:2px">STARTED</div>
         <div style="font-weight:600">${c.start}</div>
       </div>
+      ${(currentUser && currentUser.role==='coach') ? '' : `
       <div style="background:var(--surface);border-radius:4px;padding:10px 14px;flex:1">
         <div style="font-size:10px;color:var(--sub);margin-bottom:2px">RATE</div>
         <div style="font-weight:600;color:var(--pink)">${fmtAUD(rateAUD(c))}/mo</div>
-      </div>
+      </div>`}
     </div>
     <div style="background:var(--surface);border-radius:4px;padding:10px 14px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <div>
@@ -12452,7 +12453,7 @@ function renderPulse(){
                 <div style="font-size:18px">${s==='green'?'🟢':s==='yellow'?'🟡':s==='red'?'🔴':'⬜'}</div>
               </div>
               <div style="font-size:11px;color:var(--sub);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <span>${c.coach} · ${daysActive}d active · ${fmtAUD(rateAUD(c))}/mo</span>
+                <span>${c.coach} · ${daysActive}d active${(currentUser && currentUser.role==='coach') ? '' : ` · ${fmtAUD(rateAUD(c))}/mo`}</span>
               </div>
               <div style="margin-bottom:6px">${igLink(c.instagram)}</div>
               ${pd.note?`<div style="font-size:12px;color:var(--white);background:var(--surface);border-radius:4px;padding:6px 8px;margin-bottom:6px">${pd.note}</div>`:''}
