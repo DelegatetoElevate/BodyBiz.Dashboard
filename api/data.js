@@ -121,7 +121,23 @@ export default async function handler(req, res) {
       // (that's outside "Client Pulse" scope). Filtered here, server-side,
       // so a restricted account's browser never receives the rest of the
       // team's data in the first place.
-      const filteredClients = (data.clients || []).filter((c) => c.coach === identity.coach);
+      //
+      // Financial fields are also stripped. Hiding them in the interface
+      // isn't enough on its own — if they were still in the response, anyone
+      // could read them with browser dev tools. Removing them here means the
+      // numbers genuinely never leave the server for a coach session.
+      const MONEY_FIELDS = [
+        'rate', 'currency', 'billing', 'payment',
+        'pif_amount', 'pif_months', 'upfront_amount',
+        'weekly_rate', 'first_month_amount', 'monthly_rate',
+      ];
+      const filteredClients = (data.clients || [])
+        .filter((c) => c.coach === identity.coach)
+        .map((c) => {
+          const safe = { ...c };
+          MONEY_FIELDS.forEach((f) => delete safe[f]);
+          return safe;
+        });
       return res.status(200).json({ clients: filteredClients, calls: [] });
     } catch (e) {
       return res.status(500).json({ error: String(e) });
