@@ -10935,7 +10935,7 @@ function syncToServer(){
     fetch('/api/data',{
       method:'POST',
       headers:{'content-type':'application/json'},
-      body:JSON.stringify({clients:clients,calls:calls})
+      body:JSON.stringify({clients:clients,calls:calls,touchLogs:touchLogs})
     }).catch(function(e){console.error('Sync to shared storage failed:',e);});
   },300);
 }
@@ -10949,6 +10949,26 @@ async function syncFromServer(){
     }
     if(d&&Array.isArray(d.calls)&&d.calls.length){
       calls=d.calls;
+    }
+    if(d&&Array.isArray(d.touchLogs)){
+      // Merge rather than replace. Touch logs used to live only in each
+      // person's browser, so on the first load after this change someone may
+      // hold history the server has never seen — overwriting would wipe it.
+      // Keyed by clientId_days; the most recent entry for a key wins.
+      const byKey = new Map();
+      [...d.touchLogs, ...touchLogs].forEach(l=>{
+        if(!l || !l.key) return;
+        const prev = byKey.get(l.key);
+        if(!prev) { byKey.set(l.key, l); return; }
+        const pd = Date.parse(prev.date), ld = Date.parse(l.date);
+        if(isNaN(pd) || (!isNaN(ld) && ld >= pd)) byKey.set(l.key, l);
+      });
+      const merged = [...byKey.values()];
+      const changed = merged.length !== d.touchLogs.length;
+      touchLogs = merged;
+      localStorage.setItem('bb_touchlogs', JSON.stringify(touchLogs));
+      // If we contributed anything the server didn't have, push it back up.
+      if(changed) syncToServer();
     }
     if(!d||!Array.isArray(d.clients)||!d.clients.length){
       // Nothing saved on the server yet — seed it with the baked-in starting data
@@ -12606,7 +12626,14 @@ function saveResign(){
 // TOUCH POINTS
 // ============================================================
 let touchLogs = JSON.parse(localStorage.getItem('bb_touchlogs') || '[]');
-function saveTouchLogs(){ localStorage.setItem('bb_touchlogs', JSON.stringify(touchLogs)); }
+// Touch logs are shared team-wide: whoever sends the DM, everyone should see
+// it as done. They were previously per-browser (localStorage only), which
+// meant two people looking at the same client saw different overdue counts.
+// localStorage is now just an offline cache; the server copy is the truth.
+function saveTouchLogs(){
+  localStorage.setItem('bb_touchlogs', JSON.stringify(touchLogs));
+  syncToServer();
+}
 
 const TP_MILESTONES = [3, 14, 30, 60, 90, 180, 365];
 const TP_WINDOW = 2; // days either side counts as "due today"
@@ -12832,6 +12859,8 @@ syncFromServer().then(function(){
   sanitiseDates();
   loadFX();
   syncPulseFromServer();
+  // Touch point counts depend on the shared logs that just arrived.
+  if(typeof renderTouchPoints === 'function') renderTouchPoints();
   // Explicitly initialise the view. Without this the app just displays
   // whichever page happened to carry class="page active" in the saved HTML,
   // showing that page's *stale exported markup* rather than content rendered
