@@ -138,7 +138,11 @@ export default async function handler(req, res) {
           MONEY_FIELDS.forEach((f) => delete safe[f]);
           return safe;
         });
-      return res.status(200).json({ clients: filteredClients, calls: [] });
+      // Touch logs for this coach's own clients only — same reasoning as the
+      // client filtering above: don't send them records they can't see.
+      const myIds = new Set(filteredClients.map((c) => c.id));
+      const myTouchLogs = (data.touchLogs || []).filter((l) => myIds.has(l.clientId));
+      return res.status(200).json({ clients: filteredClients, calls: [], touchLogs: myTouchLogs });
     } catch (e) {
       return res.status(500).json({ error: String(e) });
     }
