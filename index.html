@@ -9517,7 +9517,7 @@ body{visibility:hidden}
         <option value="all">All Pending</option>
         <option value="done">Completed</option>
       </select>
-      <button class="btn btn-pink" style="font-size:13px;padding:8px 16px" onclick="renderTouchPoints()">Refresh</button>
+      <button class="btn btn-pink" style="font-size:13px;padding:8px 16px" onclick="refreshTouchPoints()">Refresh</button>
     </div>
   </div>
 
@@ -12871,7 +12871,84 @@ syncFromServer().then(function(){
 
 
 // ============================================================
-// AUTH — identity comes from the outer login gate (login.html /
+// LIVE REFRESH
+// Keeps shared data (touch logs, pulse statuses) current without needing a
+// manual page refresh, so two people on different devices see the same
+// numbers. Deliberately conservative:
+//  - only polls while the tab is actually visible
+//  - pauses while a modal is open, so it can't yank data mid-edit
+//  - refreshes immediately when you switch back to the tab
+//  - only touches shared/collaborative data, never a form you're filling in
+// ============================================================
+const LIVE_REFRESH_MS = 45000;
+
+function anyModalOpen(){
+  return !!document.querySelector('.modal-overlay.open');
+}
+
+async function pollSharedData(opts){
+  const silent = !(opts && opts.force);
+  if(silent && (document.hidden || anyModalOpen())) return;
+  try{
+    const [dRes, pRes] = await Promise.all([
+      fetch('/api/data'),
+      fetch('/api/pulse').catch(()=>null)
+    ]);
+    if(dRes && dRes.ok){
+      const d = await dRes.json();
+      if(d && Array.isArray(d.touchLogs)){
+        const byKey = new Map();
+        [...d.touchLogs, ...touchLogs].forEach(l=>{
+          if(!l || !l.key) return;
+          const prev = byKey.get(l.key);
+          if(!prev){ byKey.set(l.key,l); return; }
+          const pd = Date.parse(prev.date), ld = Date.parse(l.date);
+          if(isNaN(pd) || (!isNaN(ld) && ld >= pd)) byKey.set(l.key,l);
+        });
+        const merged = [...byKey.values()];
+        if(merged.length !== touchLogs.length){
+          touchLogs = merged;
+          localStorage.setItem('bb_touchlogs', JSON.stringify(touchLogs));
+        }
+      }
+      // Refresh the client list too, but never while an edit is in flight.
+      if(d && Array.isArray(d.clients) && d.clients.length && !anyModalOpen()){
+        clients = d.clients;
+        if(Array.isArray(d.calls) && d.calls.length) calls = d.calls;
+      }
+    }
+    if(pRes && pRes.ok){
+      const p = await pRes.json();
+      if(p && typeof p === 'object') pulseData = p;
+    }
+    // Re-render whatever page is on screen so the new data actually shows.
+    const active = document.querySelector('.page.active');
+    const id = active ? active.id : '';
+    if(id === 'page-touchpoints' && typeof renderTouchPoints === 'function') renderTouchPoints();
+    else if(id === 'page-pulse' && typeof renderPulse === 'function') renderPulse();
+    else if(typeof renderAll === 'function') renderAll();
+  }catch(e){
+    // Offline or a hiccup — try again on the next tick rather than erroring at the user.
+    console.warn('Live refresh skipped:', e);
+  }
+}
+
+setInterval(pollSharedData, LIVE_REFRESH_MS);
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden) pollSharedData();
+});
+
+// Manual refresh button — actually fetches from the server rather than just
+// re-drawing what's already in memory.
+async function refreshTouchPoints(){
+  const btn = event && event.target;
+  const orig = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = 'Refreshing…'; btn.disabled = true; }
+  await pollSharedData({force:true});
+  if(btn){ btn.textContent = orig || 'Refresh'; btn.disabled = false; }
+}
+
+
 // api/login.js), delivered via a cookie set at login time. This is a
 // convenience copy for the UI (which name/banner/nav to show); the
 // server independently re-verifies a separate signed, HttpOnly cookie
