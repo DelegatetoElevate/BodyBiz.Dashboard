@@ -10929,14 +10929,27 @@ function save(){localStorage.setItem('bb_biz_v3',JSON.stringify(clients));syncTo
 // SHARED STORAGE (all logged-in users see the same data)
 // ============================================================
 let _syncTimer=null;
+// True from the moment a local change is made until the server has confirmed
+// it. The background poller checks this before replacing local data — without
+// it, a poll landing inside the debounce window below would overwrite an
+// unsaved change (e.g. a just-added client) and then upload the overwrite.
+let _pendingLocalWrite=false;
 function syncToServer(){
+  _pendingLocalWrite=true;
   clearTimeout(_syncTimer);
   _syncTimer=setTimeout(function(){
     fetch('/api/data',{
       method:'POST',
       headers:{'content-type':'application/json'},
       body:JSON.stringify({clients:clients,calls:calls,touchLogs:touchLogs})
-    }).catch(function(e){console.error('Sync to shared storage failed:',e);});
+    }).then(function(r){
+      if(!r.ok) throw new Error('save rejected: '+r.status);
+      _pendingLocalWrite=false;
+    }).catch(function(e){
+      // Stay dirty on failure so the poller still won't clobber the change.
+      console.error('Sync to shared storage failed:',e);
+      alert('Could not save to the server — your change may not be shared with the team. Check your connection and try again.');
+    });
   },300);
 }
 async function syncFromServer(){
@@ -12889,6 +12902,9 @@ function anyModalOpen(){
 async function pollSharedData(opts){
   const silent = !(opts && opts.force);
   if(silent && (document.hidden || anyModalOpen())) return;
+  // Never pull server data over the top of a local change that hasn't been
+  // confirmed yet — that would silently discard it.
+  if(_pendingLocalWrite) return;
   try{
     const [dRes, pRes] = await Promise.all([
       fetch('/api/data'),
@@ -12912,9 +12928,17 @@ async function pollSharedData(opts){
         }
       }
       // Refresh the client list too, but never while an edit is in flight.
-      if(d && Array.isArray(d.clients) && d.clients.length && !anyModalOpen()){
-        clients = d.clients;
-        if(Array.isArray(d.calls) && d.calls.length) calls = d.calls;
+      // Merge by id rather than replacing wholesale: if someone else added a
+      // client seconds ago, a straight replace could drop a record that only
+      // exists locally and hasn't been confirmed yet.
+      if(d && Array.isArray(d.clients) && d.clients.length && !anyModalOpen() && !_pendingLocalWrite){
+        const serverIds = new Set(d.clients.map(c=>c.id));
+        const localOnly = clients.filter(c=>!serverIds.has(c.id));
+        clients = [...d.clients, ...localOnly];
+        if(Array.isArray(d.calls) && d.calls.length){
+          const sIds = new Set(d.calls.map(c=>c.id));
+          calls = [...d.calls, ...calls.filter(c=>!sIds.has(c.id))];
+        }
       }
     }
     if(pRes && pRes.ok){
