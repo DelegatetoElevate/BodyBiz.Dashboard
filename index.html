@@ -12217,6 +12217,9 @@ function showPage(id){
 // ============================================================
 let currentUser = null;
 let pulseData = JSON.parse(localStorage.getItem('bb_pulse')||'{}');
+// Set while a pulse update is in flight, so the background poller can't
+// replace it with the server's older copy before it lands.
+let _pendingPulseWrite = false;
 async function syncPulseFromServer(){
   try{
     const r = await fetch('/api/pulse');
@@ -12344,11 +12347,21 @@ function savePulseStatus(){
     updatedBy: (currentUser && currentUser.name) || ''
   };
   savePulseData();
+  // Confirm the save actually reached the shared store. This used to be
+  // fire-and-forget: if the request failed, the note stayed on screen looking
+  // saved but never reached the database, and nobody would know to report it.
+  _pendingPulseWrite = true;
   fetch('/api/pulse',{
     method:'POST',
     headers:{'content-type':'application/json'},
     body:JSON.stringify({clientId:pulseCurrentId, status, note})
-  }).catch(function(e){console.error('Pulse sync to server failed:',e);});
+  }).then(function(r){
+    if(!r.ok) throw new Error('server rejected the update ('+r.status+')');
+    _pendingPulseWrite = false;
+  }).catch(function(e){
+    console.error('Pulse sync to server failed:',e);
+    alert('This update could not be saved to the shared dashboard, so the rest of the team won\'t see it yet.\n\nCheck your connection and set the status again.');
+  });
   closePulseModal();
   renderPulse();
 }
@@ -12943,7 +12956,7 @@ async function pollSharedData(opts){
     }
     if(pRes && pRes.ok){
       const p = await pRes.json();
-      if(p && typeof p === 'object') pulseData = p;
+      if(p && typeof p === 'object' && !_pendingPulseWrite) pulseData = p;
     }
     // Re-render whatever page is on screen so the new data actually shows.
     const active = document.querySelector('.page.active');
