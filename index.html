@@ -10894,12 +10894,17 @@ function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;
 // DATA
 // ============================================================
 // ============================================================
-// RE-SIGN BADGE
-// A client who churned and came back is recorded as a new record with
-// resign:'yes' and a resignedFromId pointing at the previous stint — so
-// that record's own start date IS the date they re-signed.
-// Shown wherever a client appears, since a returning client is worth
-// treating differently to a first-timer.
+// RE-SIGN / RETURN BADGES
+// Two different things, shown differently:
+//
+//  RE-SIGNED — this record IS a re-sign. Driven solely by the `resign`
+//    field, which is the source of truth (set on the Re-signed? dropdown
+//    or by the Re-sign button). The record's own start date is the date
+//    they re-signed.
+//
+//  RETURNED — this is an OLD stint whose client later came back. Detected
+//    by another record pointing at this one via resignedFromId. Shows how
+//    long they were away between leaving and coming back.
 // ============================================================
 function fmtShortDate(d){
   if(!d) return '';
@@ -10907,10 +10912,34 @@ function fmtShortDate(d){
   if(isNaN(dt)) return '';
   return dt.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
 }
-function isResign(c){
-  return !!(c && (c.resignedFromId || c.resign === 'yes'));
+function daysBetween(a,b){
+  const d1 = new Date(a), d2 = new Date(b);
+  if(isNaN(d1)||isNaN(d2)) return null;
+  return Math.round((d2-d1)/86400000);
 }
-// How many times they've come back (2nd stint, 3rd stint...).
+// "45d" / "3 months" / "1 year 2 months" — readable gap length.
+function humanGap(days){
+  if(days === null || days < 0) return '';
+  if(days < 60) return days + 'd';
+  const months = Math.round(days/30.44);
+  if(months < 12) return months + ' month' + (months===1?'':'s');
+  const years = Math.floor(months/12), rem = months%12;
+  return years + ' year' + (years===1?'':'s') + (rem?' '+rem+' month'+(rem===1?'':'s'):'');
+}
+
+// The `resign` field is the source of truth for whether this is a re-sign.
+function isResign(c){
+  return !!(c && c.resign === 'yes');
+}
+// The later record that this stint led into, if the client came back.
+function returnRecordFor(c){
+  if(!c) return null;
+  return clients.find(x => x.resignedFromId === c.id) || null;
+}
+function hasReturned(c){
+  return !!returnRecordFor(c);
+}
+// How many stints deep this record is (2nd time back, 3rd time back...).
 function resignCount(c){
   let n = 0, cur = c, guard = 0;
   while(cur && cur.resignedFromId && guard++ < 20){
@@ -10919,13 +10948,33 @@ function resignCount(c){
   }
   return n;
 }
+
 function resignBadge(c, opts){
   if(!isResign(c)) return '';
   const size = (opts && opts.size) || '10px';
   const times = resignCount(c);
   const nth = times > 1 ? ` ×${times}` : '';
   const when = fmtShortDate(c.start);
-  return `<span title="Re-signed${when?' on '+when:''}${times>1?' — '+times+' times':''}" style="display:inline-block;font-size:${size};font-weight:700;letter-spacing:.4px;color:var(--pink);background:var(--pink-dim);border:1px solid rgba(233,30,140,0.35);padding:1px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle">↩ RE-SIGNED${nth}${when?' · '+when:''}</span>`;
+  // How long they were away before coming back, if we can trace the gap.
+  let away = '';
+  if(c.resignedFromId){
+    const prev = clients.find(x => x.id === c.resignedFromId);
+    if(prev && prev.end){
+      const g = humanGap(daysBetween(prev.end, c.start));
+      if(g) away = ` — ${g} away`;
+    }
+  }
+  return `<span title="Re-signed${when?' on '+when:''}${away}${times>1?' · '+times+' times':''}" style="display:inline-block;font-size:${size};font-weight:700;letter-spacing:.4px;color:var(--pink);background:var(--pink-dim);border:1px solid rgba(233,30,140,0.35);padding:1px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle">↩ RE-SIGNED${nth}${when?' · '+when:''}</span>`;
+}
+
+// Shown on the earlier stint: this client left, then came back later.
+function returnBadge(c, opts){
+  const next = returnRecordFor(c);
+  if(!next) return '';
+  const size = (opts && opts.size) || '10px';
+  const gap = c.end ? humanGap(daysBetween(c.end, next.start)) : '';
+  const when = fmtShortDate(next.start);
+  return `<span title="Left ${fmtShortDate(c.end)} and returned ${when}${gap?' after '+gap+' away':''}" style="display:inline-block;font-size:${size};font-weight:700;letter-spacing:.4px;color:var(--green);background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.30);padding:1px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle">↩ RETURNED${gap?' after '+gap:''}</span>`;
 }
 
 function uid(){return Math.random().toString(36).slice(2,9);}
@@ -11584,7 +11633,7 @@ function renderClientTable(){
     ?list.map(c=>{
       const cx=c.currency||'AUD';const sb=c.status==='active'?'badge-active':c.status==='churned'?'badge-churned':'badge-paused';
       return `<tr onclick="openEdit('${c.id}')">
-        <td style="font-weight:500">${c.name}${isResign(c)?' '+resignBadge(c):c.status==='churned'&&clients.some(x=>x.resignedFromId===c.id)?'<span style="font-size:10px;color:var(--sub);background:rgba(255,255,255,0.05);margin-left:6px;padding:1px 6px;border-radius:2px">returned</span>':''}<div style="margin-top:2px">${igLink(c.instagram)}</div></td>
+        <td style="font-weight:500">${c.name}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(c.instagram)}</div></td>
         <td>${c.coach}</td><td><span class="badge ${sb}">${c.status}</span></td>
         <td><span class="badge ${cxB[cx]||''}">${CX[cx].flag} ${cx}</span></td>
         <td>${rateDisplay(c)} ${c.billing==='weekly'?'<span style="font-size:10px;color:var(--yellow);background:rgba(255,196,0,0.12);padding:1px 5px;border-radius:2px">WK</span>':c.billing==='pif_months'?'<span style="font-size:10px;color:#a259ff;background:rgba(162,89,255,0.12);padding:1px 5px;border-radius:2px">PIF</span>':c.billing==='weekly_upfront'?(upfrontPhase(c)?'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">UPFRONT</span>':'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">WK SUB</span>'):c.billing==='monthly_upfront'?'<span style="font-size:10px;color:#5c9aff;background:rgba(41,121,255,0.12);padding:1px 5px;border-radius:2px">MO+</span>':''}</td>
@@ -12327,7 +12376,7 @@ function openPulseModal(clientId){
   document.getElementById('pulseModalTitle').textContent = c.name + ' — Update Status';
   const igh = normaliseHandle(c.instagram);
   document.getElementById('pulseModalContent').innerHTML = `
-    ${isResign(c)?`<div style="margin-bottom:10px">${resignBadge(c,{size:'11px'})}</div>`:''}
+    ${(isResign(c)||hasReturned(c))?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">${resignBadge(c,{size:'11px'})}${returnBadge(c,{size:'11px'})}</div>`:''}
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">
       <div style="background:var(--surface);border-radius:4px;padding:10px 14px;flex:1">
         <div style="font-size:10px;color:var(--sub);margin-bottom:2px">COACH</div>
@@ -12534,7 +12583,7 @@ function renderPulse(){
                 <div style="font-weight:600;font-size:14px">${c.name}</div>
                 <div style="font-size:18px">${s==='green'?'🟢':s==='yellow'?'🟡':s==='red'?'🔴':'⬜'}</div>
               </div>
-              ${isResign(c)?`<div style="margin-bottom:6px">${resignBadge(c)}</div>`:''}
+              ${(isResign(c)||hasReturned(c))?`<div style="margin-bottom:6px;display:flex;gap:5px;flex-wrap:wrap">${resignBadge(c)}${returnBadge(c)}</div>`:''}
               <div style="font-size:11px;color:var(--sub);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <span>${c.coach} · ${daysActive}d active${(currentUser && currentUser.role==='coach') ? '' : ` · ${fmtAUD(rateAUD(c))}/mo`}</span>
               </div>
@@ -12812,7 +12861,7 @@ function renderTouchPoints() {
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
             <span style="font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:1px;color:${color}">${TP_LABELS[days]}</span>
             <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:2px;background:rgba(0,0,0,0.3);color:${urgencyColor}">${urgencyLabel}</span>
-            ${resignBadge(c)}
+            ${resignBadge(c)}${returnBadge(c)}
           </div>
           <div style="font-weight:600;font-size:15px">${c.name}</div>
           <div style="font-size:11px;color:var(--sub);margin-top:2px">Coach: ${c.coach} · Started ${c.start} · ${TP_DESC[days]}</div>
