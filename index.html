@@ -10519,7 +10519,11 @@ body{visibility:hidden}
       </div>
     </div>
     <div class="form-row full"><div class="form-group"><div class="form-label">Notes</div><input class="form-input" id="m_notes" placeholder="Optional notes..."></div></div>
-    <div class="modal-footer">
+    <div class="modal-footer" style="display:flex;align-items:center;gap:10px">
+      <label id="dncWrap" style="display:flex;align-items:center;gap:8px;margin-right:auto;cursor:pointer;user-select:none;font-size:12px;color:var(--sub)">
+        <input type="checkbox" id="m_dnc" onchange="confirmDNC(this)" style="width:16px;height:16px;accent-color:var(--red);cursor:pointer">
+        <span id="dncLabel">Do not message</span>
+      </label>
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-red" id="deleteBtn" style="display: none;" onclick="deleteClient()">Delete</button>
       <button class="btn btn-ghost" id="resignBtn" style="display: none; border-color: var(--pink); color: var(--pink);" onclick="openResignModal()">↩ Re-sign</button>
@@ -10975,6 +10979,36 @@ function returnBadge(c, opts){
   const gap = c.end ? humanGap(daysBetween(c.end, next.start)) : '';
   const when = fmtShortDate(next.start);
   return `<span title="Left ${fmtShortDate(c.end)} and returned ${when}${gap?' after '+gap+' away':''}" style="display:inline-block;font-size:${size};font-weight:700;letter-spacing:.4px;color:var(--green);background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.30);padding:1px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle">↩ RETURNED${gap?' after '+gap:''}</span>`;
+}
+
+// ============================================================
+// DO NOT CONTACT
+// Marks someone who must not be messaged — they're excluded from the
+// Touch Points list and flagged everywhere they appear, so nobody DMs
+// them by accident.
+// ============================================================
+function isDNC(c){ return !!(c && c.dnc); }
+
+function dncBadge(c, opts){
+  if(!isDNC(c)) return '';
+  const size = (opts && opts.size) || '10px';
+  return `<span title="Do not contact — excluded from Touch Points" style="display:inline-block;font-size:${size};font-weight:700;letter-spacing:.4px;color:var(--red);background:rgba(255,61,87,0.12);border:1px solid rgba(255,61,87,0.4);padding:1px 7px;border-radius:3px;white-space:nowrap;vertical-align:middle">⛔ DO NOT CONTACT</span>`;
+}
+
+// Confirm before ticking the box; untick again if they back out. Unticking
+// doesn't prompt — removing a restriction is a safe direction to fail in.
+function confirmDNC(el){
+  const label = document.getElementById('dncLabel');
+  if(el.checked){
+    const name = (document.getElementById('m_name').value || 'this person').trim();
+    const ok = confirm(`Are you sure you would like to tag ${name} as DO NOT CONTACT?\n\nThey'll be removed from Touch Points and flagged across the dashboard so nobody messages them.`);
+    if(!ok){ el.checked = false; }
+  }
+  if(label){
+    label.textContent = el.checked ? '⛔ Do not message' : 'Do not message';
+    label.style.color = el.checked ? 'var(--red)' : '';
+    label.style.fontWeight = el.checked ? '700' : '';
+  }
 }
 
 function uid(){return Math.random().toString(36).slice(2,9);}
@@ -11633,7 +11667,7 @@ function renderClientTable(){
     ?list.map(c=>{
       const cx=c.currency||'AUD';const sb=c.status==='active'?'badge-active':c.status==='churned'?'badge-churned':'badge-paused';
       return `<tr onclick="openEdit('${c.id}')">
-        <td style="font-weight:500">${c.name}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(c.instagram)}</div></td>
+        <td style="font-weight:500">${c.name}${isDNC(c)?' '+dncBadge(c):''}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(c.instagram)}</div></td>
         <td>${c.coach}</td><td><span class="badge ${sb}">${c.status}</span></td>
         <td><span class="badge ${cxB[cx]||''}">${CX[cx].flag} ${cx}</span></td>
         <td>${rateDisplay(c)} ${c.billing==='weekly'?'<span style="font-size:10px;color:var(--yellow);background:rgba(255,196,0,0.12);padding:1px 5px;border-radius:2px">WK</span>':c.billing==='pif_months'?'<span style="font-size:10px;color:#a259ff;background:rgba(162,89,255,0.12);padding:1px 5px;border-radius:2px">PIF</span>':c.billing==='weekly_upfront'?(upfrontPhase(c)?'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">UPFRONT</span>':'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">WK SUB</span>'):c.billing==='monthly_upfront'?'<span style="font-size:10px;color:#5c9aff;background:rgba(41,121,255,0.12);padding:1px 5px;border-radius:2px">MO+</span>':''}</td>
@@ -11674,6 +11708,13 @@ function calcWeeklySubStart(){
 }
 function openAddModal(){
   editingId=null;setText('modalTitle','Add Client');
+  const dncNew=document.getElementById('m_dnc');
+  if(dncNew){
+    dncNew.checked=false;
+    document.getElementById('dncLabel').textContent='Do not message';
+    document.getElementById('dncLabel').style.color='';
+    document.getElementById('dncLabel').style.fontWeight='';
+  }
   ['m_name','m_instagram','m_end','m_notes','m_pif_amount','m_pif_months','m_upfront_amount','m_weekly_rate','m_weekly_start','m_first_month_amount','m_monthly_rate'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})
   document.getElementById('m_upfront_weeks').value='4';
   document.getElementById('m_coach').value='Luke';
@@ -11715,6 +11756,11 @@ function openEdit(id){
   document.getElementById('m_resign').value=c.resign||'no';
   document.getElementById('m_reason').value=c.reason||'';
   document.getElementById('m_instagram').value=c.instagram||'';
+  const dncEl=document.getElementById('m_dnc');
+  dncEl.checked=!!c.dnc;
+  document.getElementById('dncLabel').textContent=dncEl.checked?'⛔ Do not message':'Do not message';
+  document.getElementById('dncLabel').style.color=dncEl.checked?'var(--red)':'';
+  document.getElementById('dncLabel').style.fontWeight=dncEl.checked?'700':'';
   document.getElementById('m_notes').value=c.notes||'';
   document.getElementById('deleteBtn').style.display='block';
   document.getElementById('resignBtn').style.display=(c.status==='churned'||c.status==='active')?'block':'none';
@@ -11741,6 +11787,7 @@ function saveClient(){
     payment:document.getElementById('m_payment').value,source:document.getElementById('m_source').value,
     resign:document.getElementById('m_resign').value,reason:document.getElementById('m_reason').value,
     instagram:normaliseHandle(document.getElementById('m_instagram').value),
+    dnc:document.getElementById('m_dnc').checked,
     notes:document.getElementById('m_notes').value};
   if(editingId){const i=clients.findIndex(c=>c.id===editingId);if(i>=0)clients[i]={...clients[i],...data};}
   else clients.push({id:uid(),...data});
@@ -11788,13 +11835,14 @@ function downloadCSV(filename, header, rows){
 function exportCSV(){
   const list = getFilteredClients();
   if(!list.length){ alert('No clients match the current filters — nothing to export.'); return; }
-  const h=['Name','Instagram','Coach','Status','Pulse Status','Pulse Note','Pulse Last Updated','Days Since Pulse Update','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes'];
+  const h=['Name','Instagram','Do Not Contact','Coach','Status','Pulse Status','Pulse Note','Pulse Last Updated','Days Since Pulse Update','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes'];
   const PL={red:'At Risk',yellow:'Watch',green:'On Track'};
   const rows=list.map(c=>{
     const pd=pulseData[c.id]||{};
     const age=pulseAgeDays(c.id);
     return [
       c.name, normaliseHandle(c.instagram)?'@'+normaliseHandle(c.instagram):'',
+      isDNC(c)?'DO NOT CONTACT':'',
       c.coach, c.status,
       PL[pd.status]||'Not Set', pd.note||'', pd.updatedAt||'', age===null?'':age,
       c.currency||'AUD', c.rate, Math.round(rateAUD(c)),
@@ -12376,7 +12424,7 @@ function openPulseModal(clientId){
   document.getElementById('pulseModalTitle').textContent = c.name + ' — Update Status';
   const igh = normaliseHandle(c.instagram);
   document.getElementById('pulseModalContent').innerHTML = `
-    ${(isResign(c)||hasReturned(c))?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">${resignBadge(c,{size:'11px'})}${returnBadge(c,{size:'11px'})}</div>`:''}
+    ${(isResign(c)||hasReturned(c)||isDNC(c))?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">${dncBadge(c,{size:'11px'})}${resignBadge(c,{size:'11px'})}${returnBadge(c,{size:'11px'})}</div>`:''}
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">
       <div style="background:var(--surface);border-radius:4px;padding:10px 14px;flex:1">
         <div style="font-size:10px;color:var(--sub);margin-bottom:2px">COACH</div>
@@ -12583,7 +12631,7 @@ function renderPulse(){
                 <div style="font-weight:600;font-size:14px">${c.name}</div>
                 <div style="font-size:18px">${s==='green'?'🟢':s==='yellow'?'🟡':s==='red'?'🔴':'⬜'}</div>
               </div>
-              ${(isResign(c)||hasReturned(c))?`<div style="margin-bottom:6px;display:flex;gap:5px;flex-wrap:wrap">${resignBadge(c)}${returnBadge(c)}</div>`:''}
+              ${(isResign(c)||hasReturned(c)||isDNC(c))?`<div style="margin-bottom:6px;display:flex;gap:5px;flex-wrap:wrap">${dncBadge(c)}${resignBadge(c)}${returnBadge(c)}</div>`:''}
               <div style="font-size:11px;color:var(--sub);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <span>${c.coach} · ${daysActive}d active${(currentUser && currentUser.role==='coach') ? '' : ` · ${fmtAUD(rateAUD(c))}/mo`}</span>
               </div>
@@ -12788,7 +12836,9 @@ function getTouchPointsForClient(c) {
 }
 
 function getAllTouchPoints() {
-  const active = clients.filter(c => c.status === 'active' && c.start && parseInt(c.start.slice(0,4)) >= 2010);
+  // Do-not-contact clients are excluded outright — Touch Points exists to
+  // prompt DMs, so listing someone who must not be messaged is a hazard.
+  const active = clients.filter(c => c.status === 'active' && !isDNC(c) && c.start && parseInt(c.start.slice(0,4)) >= 2010);
   return active.flatMap(c => getTouchPointsForClient(c)).filter(tp => {
     // Auto-skip if no log and more than 30 days overdue (client predates the system)
     if (!tp.log && tp.diffDays < -30) return false;
