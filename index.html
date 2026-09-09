@@ -12820,17 +12820,56 @@ const TP_DESC = {
   365: 'One full year — personal message, celebrate their consistency'
 };
 
+// ============================================================
+// CONTINUOUS TENURE FOR TOUCH POINTS
+// A re-sign creates a new client record, which would otherwise restart the
+// check-in sequence from day zero — so a client who re-signs repeatedly
+// would never reach their 1-year milestone, and would be sent the early
+// check-ins again.
+//
+// Rule: if they were away 6 months or less, the count carries on from their
+// original start date. Away longer than that and it's a genuine fresh start,
+// so the sequence restarts.
+// ============================================================
+const TP_CONTINUITY_MAX_GAP_DAYS = 183; // ~6 months
+
+// Every earlier stint linked to this one by an unbroken chain of re-signs.
+// Stops as soon as a gap longer than the limit above is found.
+function tenureChain(c){
+  const chain = [c];
+  let guard = 0;
+  while(chain[0] && chain[0].resignedFromId && guard++ < 20){
+    const prev = clients.find(x => x.id === chain[0].resignedFromId);
+    if(!prev || !prev.end) break;
+    const gap = daysBetween(prev.end, chain[0].start);
+    if(gap === null || gap > TP_CONTINUITY_MAX_GAP_DAYS) break; // too long away — fresh start
+    chain.unshift(prev);
+  }
+  return chain;
+}
+// The date their check-in clock actually runs from.
+function tenureStart(c){
+  const chain = tenureChain(c);
+  return chain[0].start;
+}
+
 function getTouchPointsForClient(c) {
-  const start = new Date(...c.start.split('-').map(Number).map((v,i)=>i===1?v-1:v));
+  const startStr = tenureStart(c);
+  const start = new Date(...startStr.split('-').map(Number).map((v,i)=>i===1?v-1:v));
   const today = new Date();
   today.setHours(0,0,0,0);
+  // Milestone counts as done if it was logged against ANY stint in the chain,
+  // so returning clients aren't sent check-ins they've already had.
+  const chainIds = tenureChain(c).map(x => x.id);
   return TP_MILESTONES.map(days => {
     const due = new Date(start);
     due.setDate(due.getDate() + days);
     due.setHours(0,0,0,0);
     const diffDays = Math.round((due - today) / (1000*60*60*24));
     const logKey = `${c.id}_${days}`;
-    const log = touchLogs.find(l => l.key === logKey);
+    // Prefer a log against the current record, else any earlier linked stint.
+    const log = touchLogs.find(l => l.key === logKey)
+             || touchLogs.find(l => chainIds.some(id => l.key === `${id}_${days}`));
     return { client: c, days, due, diffDays, logKey, log };
   });
 }
@@ -12914,7 +12953,7 @@ function renderTouchPoints() {
             ${resignBadge(c)}${returnBadge(c)}
           </div>
           <div style="font-weight:600;font-size:15px">${c.name}</div>
-          <div style="font-size:11px;color:var(--sub);margin-top:2px">Coach: ${c.coach} · Started ${c.start} · ${TP_DESC[days]}</div>
+          <div style="font-size:11px;color:var(--sub);margin-top:2px">Coach: ${c.coach} · Started ${tenureStart(c)}${tenureStart(c)!==c.start?` <span style="color:var(--pink)" title="Counting from their original start date — they re-signed within 6 months, so the check-in sequence continues rather than restarting">(re-signed ${c.start})</span>`:''} · ${TP_DESC[days]}</div>
           ${log ? `<div style="font-size:11px;color:var(--yellow);margin-top:3px">⚠ Previous attempt: ${log.date} — no reply</div>` : ''}
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
