@@ -12796,6 +12796,10 @@ function saveTouchLogs(){
 }
 
 const TP_MILESTONES = [3, 14, 30, 60, 90, 180, 365];
+// Luke's clients get only these two — he's in contact with them constantly,
+// so the early check-ins would just be noise. Change the coach name here if
+// this ever needs to apply to someone else.
+const TP_MILESTONES_MILESTONE_ONLY = [180, 365];
 const TP_WINDOW = 2; // days either side counts as "due today"
 
 const TP_TEMPLATES = {
@@ -12861,7 +12865,11 @@ function getTouchPointsForClient(c) {
   // Milestone counts as done if it was logged against ANY stint in the chain,
   // so returning clients aren't sent check-ins they've already had.
   const chainIds = tenureChain(c).map(x => x.id);
-  return TP_MILESTONES.map(days => {
+  // Luke speaks to his clients almost daily, so the early check-ins are
+  // redundant for them — only the two milestone touch points matter.
+  // Other coaches keep the full sequence.
+  const milestones = (c.coach === 'Luke') ? TP_MILESTONES_MILESTONE_ONLY : TP_MILESTONES;
+  return milestones.map(days => {
     const due = new Date(start);
     due.setDate(due.getDate() + days);
     due.setHours(0,0,0,0);
