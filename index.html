@@ -12828,6 +12828,31 @@ const TP_MILESTONES = [3, 14, 30, 60, 90, 180, 365];
 // so the early check-ins would just be noise. Change the coach name here if
 // this ever needs to apply to someone else.
 const TP_MILESTONES_MILESTONE_ONLY = [180, 365];
+
+// ============================================================
+// PIF RENEWAL TOUCH POINT
+// Unlike the milestones above, this isn't anchored to the start date — it's
+// computed backwards from when the paid term ends, which varies per client
+// (3-month and 6-month terms are both in use). Fires this many days before
+// expiry so there's time to have the re-sign conversation before the term
+// actually runs out.
+//
+// Luke sends these DMs personally for every PIF client regardless of which
+// coach they're assigned to, so this is exempt from the milestone-only rule
+// applied to his own clients above.
+// ============================================================
+const TP_PIF_KEY = 'pif_renewal';
+const TP_PIF_LEAD_DAYS = 14;
+
+function pifExpiryDate(c){
+  if(!c || c.billing !== 'pif_months') return null;
+  const months = parseInt(c.pif_months) || 0;
+  if(!months || !c.start) return null;
+  const d = new Date(...c.start.split('-').map(Number).map((v,i)=>i===1?v-1:v));
+  d.setMonth(d.getMonth() + months);
+  d.setHours(0,0,0,0);
+  return d;
+}
 const TP_WINDOW = 2; // days either side counts as "due today"
 
 const TP_TEMPLATES = {
@@ -12837,11 +12862,12 @@ const TP_TEMPLATES = {
   60: (name, coach) => `Hey ${name}, hope everything's going well! Just wanted to see how training and nutrition are feeling for you right now. What's been your biggest win so far? If there's anything you need extra support with just reach out 🔥`,
   90: (name, coach) => `Hey ${name}, to celebrate 3 months with Body Biz we want to send you out a Body Biz tee. Just DM me your address and size and I'll get that sorted 💪🔥`,
   180: (name, coach) => `Hey ${name}, 6 months with Body Biz — I can't believe the results you've had. [ADD THEIR WINS HERE — e.g. weight lost, muscle gained, habits built]. Honestly so proud of what you've achieved, keep doing what you're doing 🔥💪`,
-  365: (name, coach) => `Hey ${name}, one full year with Body Biz — honestly that's something to be proud of. The consistency you've shown is exactly what separates people who get results from everyone else. We really appreciate you as a client and we're grateful to have you as part of the team. Here's to year two 🔥💪`
+  365: (name, coach) => `Hey ${name}, one full year with Body Biz — honestly that's something to be proud of. The consistency you've shown is exactly what separates people who get results from everyone else. We really appreciate you as a client and we're grateful to have you as part of the team. Here's to year two 🔥💪`,
+  [TP_PIF_KEY]: (name, coach) => `Hey ${name}, your current block with us is coming to an end soon. Really happy with the progress you've made — would love to jump on a quick call to run through where you're at and map out the next phase. You can grab a time here: ${CALENDLY} 💪`
 };
 
-const TP_LABELS = { 3: '3-Day Check-in', 14: '14-Day Check-in', 30: '30-Day Check-in', 60: '60-Day Check-in', 90: '3-Month T-Shirt', 180: '6-Month Milestone', 365: '1-Year Milestone' };
-const TP_COLORS = { 3: 'var(--green)', 14: '#00bcd4', 30: 'var(--yellow)', 60: '#ff7043', 90: 'var(--pink)', 180: 'var(--orange)', 365: '#a259ff' };
+const TP_LABELS = { 3: '3-Day Check-in', 14: '14-Day Check-in', 30: '30-Day Check-in', 60: '60-Day Check-in', 90: '3-Month T-Shirt', 180: '6-Month Milestone', 365: '1-Year Milestone', [TP_PIF_KEY]: 'PIF Renewal' };
+const TP_COLORS = { 3: 'var(--green)', 14: '#00bcd4', 30: 'var(--yellow)', 60: '#ff7043', 90: 'var(--pink)', 180: 'var(--orange)', 365: '#a259ff', [TP_PIF_KEY]: '#a259ff' };
 const TP_DESC = {
   3: 'Early check-in — make sure they\'re set up and clear on everything before habits form',
   14: 'Two weeks in — are they finding their rhythm, catch anything early',
@@ -12849,7 +12875,8 @@ const TP_DESC = {
   60: 'Two months — highest churn window, be proactive not reactive',
   90: 'Three months — reinforce that they\'ve made it past the hard part',
   180: 'Six months — send a branded Body Biz tee, ask for address and size',
-  365: 'One full year — personal message, celebrate their consistency'
+  365: 'One full year — personal message, celebrate their consistency',
+  [TP_PIF_KEY]: 'Paid block ending — invite them to a call to re-sign'
 };
 
 // ============================================================
@@ -12897,7 +12924,7 @@ function getTouchPointsForClient(c) {
   // redundant for them — only the two milestone touch points matter.
   // Other coaches keep the full sequence.
   const milestones = (c.coach === 'Luke') ? TP_MILESTONES_MILESTONE_ONLY : TP_MILESTONES;
-  return milestones.map(days => {
+  const list = milestones.map(days => {
     const due = new Date(start);
     due.setDate(due.getDate() + days);
     due.setHours(0,0,0,0);
@@ -12908,6 +12935,22 @@ function getTouchPointsForClient(c) {
              || touchLogs.find(l => chainIds.some(id => l.key === `${id}_${days}`));
     return { client: c, days, due, diffDays, logKey, log };
   });
+
+  // PIF renewal — computed from the end of the paid block rather than the
+  // start, and applies to every PIF client regardless of coach, since Luke
+  // sends these himself.
+  const expiry = pifExpiryDate(c);
+  if(expiry){
+    const due = new Date(expiry);
+    due.setDate(due.getDate() - TP_PIF_LEAD_DAYS);
+    due.setHours(0,0,0,0);
+    const diffDays = Math.round((due - today) / (1000*60*60*24));
+    const logKey = `${c.id}_${TP_PIF_KEY}`;
+    const log = touchLogs.find(l => l.key === logKey)
+             || touchLogs.find(l => chainIds.some(id => l.key === `${id}_${TP_PIF_KEY}`));
+    list.push({ client: c, days: TP_PIF_KEY, due, diffDays, logKey, log, expiry });
+  }
+  return list;
 }
 
 function getAllTouchPoints() {
@@ -12915,8 +12958,11 @@ function getAllTouchPoints() {
   // prompt DMs, so listing someone who must not be messaged is a hazard.
   const active = clients.filter(c => c.status === 'active' && !isDNC(c) && c.start && parseInt(c.start.slice(0,4)) >= 2010);
   return active.flatMap(c => getTouchPointsForClient(c)).filter(tp => {
-    // Auto-skip if no log and more than 30 days overdue (client predates the system)
-    if (!tp.log && tp.diffDays < -30) return false;
+    // Auto-skip if no log and more than 30 days overdue (client predates the system).
+    // PIF renewals are exempt — a missed renewal doesn't stop mattering, the
+    // client is still paying nothing and still needs the conversation, so it
+    // stays on the list until it's actioned.
+    if (!tp.log && tp.diffDays < -30 && tp.days !== TP_PIF_KEY) return false;
     // Skip if logged and not a noreply
     if (tp.log && tp.log.outcome !== 'noreply') return false;
     return true;
@@ -12989,7 +13035,7 @@ function renderTouchPoints() {
             ${resignBadge(c)}${returnBadge(c)}
           </div>
           <div style="font-weight:600;font-size:15px">${c.name}</div>
-          <div style="font-size:11px;color:var(--sub);margin-top:2px">Coach: ${c.coach} · Started ${tenureStart(c)}${tenureStart(c)!==c.start?` <span style="color:var(--pink)" title="Counting from their original start date — they re-signed within 6 months, so the check-in sequence continues rather than restarting">(re-signed ${c.start})</span>`:''} · ${TP_DESC[days]}</div>
+          <div style="font-size:11px;color:var(--sub);margin-top:2px">Coach: ${c.coach} · Started ${tenureStart(c)}${tenureStart(c)!==c.start?` <span style="color:var(--pink)" title="Counting from their original start date — they re-signed within 6 months, so the check-in sequence continues rather than restarting">(re-signed ${c.start})</span>`:''} · ${TP_DESC[days]}${days===TP_PIF_KEY&&tp.expiry?` <span style="color:${tp.expiry<new Date()?'var(--red)':'var(--orange)'};font-weight:600">· ${c.pif_months}mo block ${tp.expiry<new Date()?'ended':'ends'} ${tp.expiry.toISOString().slice(0,10)}</span>`:''}</div>
           ${log ? `<div style="font-size:11px;color:var(--yellow);margin-top:3px">⚠ Previous attempt: ${log.date} — no reply</div>` : ''}
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
