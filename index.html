@@ -10518,7 +10518,7 @@ body{visibility:hidden}
           </select></div>
       </div>
     </div>
-    <div class="form-row full"><div class="form-group"><div class="form-label">Notes</div><input class="form-input" id="m_notes" placeholder="Optional notes..."></div></div>
+    <div class="form-row full"><div class="form-group"><div class="form-label">Notes <span id="m_notes_stamp" style="text-transform:none;letter-spacing:0;color:var(--sub);font-weight:400"></span></div><input class="form-input" id="m_notes" placeholder="Optional notes..."></div></div>
     <div class="modal-footer" style="display:flex;align-items:center;gap:10px">
       <label id="dncWrap" style="display:flex;align-items:center;gap:8px;margin-right:auto;cursor:pointer;user-select:none;font-size:12px;color:var(--sub)">
         <input type="checkbox" id="m_dnc" onchange="confirmDNC(this)" style="width:16px;height:16px;accent-color:var(--red);cursor:pointer">
@@ -11708,6 +11708,7 @@ function calcWeeklySubStart(){
 }
 function openAddModal(){
   editingId=null;setText('modalTitle','Add Client');
+  const stampNew=document.getElementById('m_notes_stamp'); if(stampNew) stampNew.textContent='';
   const dncNew=document.getElementById('m_dnc');
   if(dncNew){
     dncNew.checked=false;
@@ -11762,6 +11763,8 @@ function openEdit(id){
   document.getElementById('dncLabel').style.color=dncEl.checked?'var(--red)':'';
   document.getElementById('dncLabel').style.fontWeight=dncEl.checked?'700':'';
   document.getElementById('m_notes').value=c.notes||'';
+  const stampEl=document.getElementById('m_notes_stamp');
+  if(stampEl) stampEl.textContent=(c.notes&&c.notesUpdatedAt)?`· last updated ${fmtShortDate(c.notesUpdatedAt)}`:'';
   document.getElementById('deleteBtn').style.display='block';
   document.getElementById('resignBtn').style.display=(c.status==='churned'||c.status==='active')?'block':'none';
   toggleChurnFields();togglePIFFields();
@@ -11789,6 +11792,14 @@ function saveClient(){
     instagram:normaliseHandle(document.getElementById('m_instagram').value),
     dnc:document.getElementById('m_dnc').checked,
     notes:document.getElementById('m_notes').value};
+  // Stamp when the note was last written, so it's clear how current it is.
+  const prevNotes = editingId ? (clients.find(x=>x.id===editingId)||{}).notes : '';
+  const prevStamp = editingId ? (clients.find(x=>x.id===editingId)||{}).notesUpdatedAt : null;
+  if((data.notes||'') !== (prevNotes||'')){
+    data.notesUpdatedAt = data.notes ? new Date().toISOString().slice(0,10) : null;
+  } else {
+    data.notesUpdatedAt = prevStamp || null;
+  }
   if(editingId){const i=clients.findIndex(c=>c.id===editingId);if(i>=0)clients[i]={...clients[i],...data};}
   else clients.push({id:uid(),...data});
   save();closeModal();renderAll();
@@ -11835,7 +11846,7 @@ function downloadCSV(filename, header, rows){
 function exportCSV(){
   const list = getFilteredClients();
   if(!list.length){ alert('No clients match the current filters — nothing to export.'); return; }
-  const h=['Name','Instagram','Do Not Contact','Coach','Status','Pulse Status','Pulse Note','Pulse Last Updated','Days Since Pulse Update','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes'];
+  const h=['Name','Instagram','Do Not Contact','Coach','Status','Pulse Status','Pulse Note','Pulse Last Updated','Days Since Pulse Update','Currency','Rate','Rate AUD','Source','Payment','Re-sign','Start','End','Months','Total Paid AUD','Proj LTV AUD','Churn Reason','Notes','Notes Last Updated'];
   const PL={red:'At Risk',yellow:'Watch',green:'On Track'};
   const rows=list.map(c=>{
     const pd=pulseData[c.id]||{};
@@ -11849,7 +11860,7 @@ function exportCSV(){
       c.source||'', c.payment||'', c.resign||'no',
       c.start, c.end||'', monthsBetween(c.start,c.end),
       Math.round(totalPaidAUD(c)), Math.round(projLTV(c)),
-      c.reason, c.notes
+      c.reason, c.notes, c.notesUpdatedAt||''
     ];
   });
   downloadCSV('bodybiz-clients-'+new Date().toISOString().slice(0,10)+'.csv', h, rows);
@@ -12732,20 +12743,29 @@ function calcResignWeeklyStart(){
   document.getElementById('rs_weekly_start').value=`${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
 }
 
+// Combines the note written on the re-sign form with whatever was already on
+// the previous stint, each dated, so history carries forward without any
+// ambiguity about when something was written.
+function buildResignNotes(orig, newNote){
+  const today = new Date().toISOString().slice(0,10);
+  const parts = [];
+  if(newNote && newNote.trim()) parts.push(`[${today}] ${newNote.trim()}`);
+  if(orig && orig.notes && orig.notes.trim()){
+    const when = orig.notesUpdatedAt || orig.start || '';
+    parts.push(`[from previous stint${when?' · '+when:''}] ${orig.notes.trim()}`);
+  }
+  return parts.join('  |  ');
+}
+
 function saveResign(){
   const orig=clients.find(x=>x.id===resigningFromId);
   if(!orig)return;
+  // If they're still active, close off the current record today.
   if(orig.status==='active'){
     orig.status='churned';
     orig.end=new Date().toISOString().slice(0,10);
     orig.reason='Re-signed';
     orig.isResign=true;
-  }
-  // If client is active, end their current record today
-  if(orig.status==='active'){
-    orig.status='churned';
-    orig.end=new Date().toISOString().slice(0,10);
-    orig.reason='Re-signed';
   }
   const startVal=document.getElementById('rs_start').value;
   if(!startVal){alert('Start date required');return;}
@@ -12770,10 +12790,18 @@ function saveResign(){
     monthly_rate:billing==='monthly_upfront'?(parseFloat(document.getElementById('rs_monthly_rate').value)||0):0,
     payment:document.getElementById('rs_payment').value,
     source:orig.source||'Instagram Inbound',
+    // Carried across from the previous stint — these describe the person, not
+    // the contract, so they shouldn't be lost when a new record is created.
+    // Without this the handle had to be re-entered after every re-sign, and a
+    // Do Not Contact flag would silently disappear.
+    instagram:orig.instagram||'',
+    dnc:!!orig.dnc,
     resign:'yes',
     resignedFromId:resigningFromId,
     reason:'',
-    notes:document.getElementById('rs_notes').value,
+    notes:buildResignNotes(orig, document.getElementById('rs_notes').value),
+    notesUpdatedAt:(document.getElementById('rs_notes').value || orig.notes)
+      ? new Date().toISOString().slice(0,10) : null,
   };
   clients.push(newClient);
   save();
