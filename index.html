@@ -12842,6 +12842,11 @@ const TP_MILESTONES_MILESTONE_ONLY = [180, 365];
 // applied to his own clients above.
 // ============================================================
 const TP_PIF_KEY = 'pif_renewal';
+// Booking link used in the PIF renewal DM. This was originally defined in the
+// Follow-Up Reminders block; when that was removed the PIF template kept
+// referencing it, which threw a ReferenceError and stopped the Log Touch
+// Point modal opening for PIF renewals.
+const CALENDLY = 'https://calendly.com/bodybiz-team/body-biz-coaching-call';
 const TP_PIF_LEAD_DAYS = 14;
 
 function pifExpiryDate(c){
