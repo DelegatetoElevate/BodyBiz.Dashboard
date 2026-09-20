@@ -12302,6 +12302,7 @@ async function bookCall(){
       Matched on ${m.how}: <strong>${l.name}</strong>${l.handle?' · @'+normaliseHandle(l.handle):''}
       — first logged ${l.date||'—'}, ${leadOutcomeText(l)}.<br>
       <span style="color:var(--sub)">Booking cancelled so you don't get a duplicate.</span>
+      ${l.callDate?`<button onclick="highlightUpcomingCall('${l.id}')" style="margin-top:8px;margin-right:6px;background:none;border:1px solid var(--sub);color:var(--sub);border-radius:4px;padding:6px 12px;font-size:11px;cursor:pointer">View their scheduled call</button>`:''}
       <button onclick="bookOntoExisting('${l.id}')"
         style="margin-top:8px;display:block;background:var(--pink);color:#fff;border:none;border-radius:4px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">
         Schedule this call on their existing record →
@@ -12397,6 +12398,7 @@ async function bookOntoExisting(leadId){
     msg.textContent = `✓ New call scheduled for ${l.name} on their existing record — ${fmtCallWhen(calls.find(c=>c.id===leadId))}`;
     setTimeout(()=>{msg.style.display='none';},6000);
     renderSalesPage();
+    highlightUpcomingCall(leadId);
   }catch(e){
     msg.style.color='var(--red)';
     msg.textContent='Could not save: '+e.message;
@@ -12440,14 +12442,33 @@ function searchLeads(){
     }).join('');
 }
 
+// Take the user to a specific scheduled call and flash it, so after booking
+// onto an existing record it's obvious where that record went.
+function highlightUpcomingCall(leadId){
+  const go = () => {
+    const el = document.getElementById('ucall_'+leadId);
+    if(!el){
+      alert('That call isn\'t in the upcoming list — its date may be more than 7 days past. You can find the lead in the All Leads table below.');
+      return;
+    }
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    el.style.boxShadow = '0 0 0 2px var(--pink)';
+    el.style.borderColor = 'var(--pink)';
+    setTimeout(()=>{ el.style.boxShadow=''; el.style.borderColor=''; }, 2600);
+  };
+  // let the re-render finish first
+  setTimeout(go, 60);
+}
+
 function renderUpcomingCalls(){
   const box = document.getElementById('upcomingCalls');
   if(!box) return;
-  // Anything booked with a date that hasn't converted yet. Past calls stay
-  // visible for 7 days so no-shows can still be rescheduled.
+  // Anything with a scheduled call date. Past calls stay visible for 7 days
+  // so no-shows can still be rescheduled. Leads who already signed are
+  // included too — a re-engagement call still needs its reminders sent.
   const now = new Date();
   const list = calls.filter(l=>{
-    if(l.signed==='yes' || !l.callDate) return false;
+    if(!l.callDate) return false;
     const h = hoursUntilCall(l);
     return h !== null && h > -168;
   }).sort((a,b)=> callDateTime(a) - callDateTime(b));
@@ -12486,12 +12507,13 @@ function renderUpcomingCalls(){
     const rescheduled = (l.rescheduleHistory||[]).length;
 
     return `
-      <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:6px;padding:14px 16px;margin-bottom:10px">
+      <div id="ucall_${l.id}" style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:6px;padding:14px 16px;margin-bottom:10px;transition:box-shadow .3s,border-color .3s">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
           <div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span style="font-weight:600">${l.name}</span>
               ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+              ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
               ${rescheduled?`<span title="Rescheduled ${rescheduled} time(s)" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}</span>`:''}
             </div>
             <div style="font-size:11px;color:var(--sub);margin-top:3px">
