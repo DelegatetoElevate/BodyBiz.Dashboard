@@ -1827,11 +1827,11 @@ body{visibility:hidden}
     <div class="card-body">
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end">
         <div class="form-group">
-          <div class="form-label">Name</div>
+          <div class="form-label">Full Name <span style="opacity:.6;font-weight:400">(optional)</span></div>
           <input class="form-input" id="bc_name" placeholder="Full name">
         </div>
         <div class="form-group">
-          <div class="form-label">Instagram Handle</div>
+          <div class="form-label">Instagram Handle <span style="color:var(--pink)">*</span></div>
           <input class="form-input" id="bc_handle" placeholder="@handle">
         </div>
         <div class="form-group">
@@ -1839,7 +1839,7 @@ body{visibility:hidden}
           <input class="form-input" id="bc_email" placeholder="name@email.com">
         </div>
         <div class="form-group">
-          <div class="form-label">Country</div>
+          <div class="form-label">Country <span style="opacity:.6;font-weight:400">(optional)</span></div>
           <select class="form-input" id="bc_country">
             <option value="AUS">🇦🇺 Australia</option>
             <option value="USA">🇺🇸 USA</option>
@@ -1850,7 +1850,7 @@ body{visibility:hidden}
           </select>
         </div>
         <div class="form-group">
-          <div class="form-label">Source</div>
+          <div class="form-label">Source <span style="opacity:.6;font-weight:400">(optional)</span></div>
           <select class="form-input" id="bc_source">
             <option value="Instagram Outbound">Instagram Outbound</option>
             <option value="Instagram Inbound">Instagram Inbound</option>
@@ -1859,15 +1859,16 @@ body{visibility:hidden}
           </select>
         </div>
         <div class="form-group">
-          <div class="form-label">Call Date</div>
+          <div class="form-label">Call Date <span style="color:var(--pink)">*</span></div>
           <input class="form-input" id="bc_date" type="date">
         </div>
         <div class="form-group">
-          <div class="form-label">Call Time</div>
+          <div class="form-label">Call Time <span style="color:var(--pink)">*</span></div>
           <input class="form-input" id="bc_time" type="time">
         </div>
         <button class="btn btn-pink" style="height:38px" onclick="bookCall()">Book Call</button>
       </div>
+      <div style="font-size:11px;color:var(--sub);margin-top:10px"><span style="color:var(--pink)">*</span> required</div>
       <div id="bc_msg" style="font-size:12px;margin-top:10px;display:none"></div>
     </div>
   </div>
@@ -12281,10 +12282,14 @@ async function bookCall(){
   const msg = document.getElementById('bc_msg');
   const show = (t,c)=>{msg.style.display='block';msg.style.color=c;msg.textContent=t;};
   const name = document.getElementById('bc_name').value.trim();
+  const handleRaw = normaliseHandle(document.getElementById('bc_handle').value);
   const date = document.getElementById('bc_date').value;
   const time = document.getElementById('bc_time').value;
-  if(!name){ show('Name is required.','var(--red)'); return; }
+  // The handle is what outreach actually needs in order to message
+  // someone, so it's the required identifier rather than the name.
+  if(!handleRaw){ show('Instagram handle is required.','var(--red)'); return; }
   if(!date){ show('Pick a date for the call.','var(--red)'); return; }
+  if(!time){ show('Pick a time for the call.','var(--red)'); return; }
 
   // Don't create a second record for someone already in the system. If it's a
   // genuine re-engagement, the call gets scheduled onto their existing record
@@ -12310,13 +12315,13 @@ async function bookCall(){
     return;
   }
   const lead = {
-    name,
-    handle: normaliseHandle(document.getElementById('bc_handle').value),
+    name: name || ('@'+handleRaw),
+    handle: handleRaw,
     email: document.getElementById('bc_email').value.trim(),
     country: document.getElementById('bc_country').value,
     source: document.getElementById('bc_source').value,
     callDate: date,
-    callTime: time || '09:00',
+    callTime: time,
     booked: 'yes',
     showed: 'no',
   };
