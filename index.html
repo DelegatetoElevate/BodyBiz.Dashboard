@@ -1818,6 +1818,67 @@ body{visibility:hidden}
     </div>
   </div>
 
+  <!-- Book a call + upcoming schedule -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">📅 Book a Call</div>
+      <div class="card-meta">Logs the lead and schedules the call</div>
+    </div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr 1fr .8fr auto;gap:12px;align-items:end">
+        <div class="form-group">
+          <div class="form-label">Name</div>
+          <input class="form-input" id="bc_name" placeholder="Full name">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Instagram Handle</div>
+          <input class="form-input" id="bc_handle" placeholder="@handle">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Country</div>
+          <select class="form-input" id="bc_country">
+            <option value="AUS">🇦🇺 Australia</option>
+            <option value="USA">🇺🇸 USA</option>
+            <option value="CAN">🇨🇦 Canada</option>
+            <option value="UK">🇬🇧 UK</option>
+            <option value="NZ">🇳🇿 New Zealand</option>
+            <option value="Other">🌍 Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Source</div>
+          <select class="form-input" id="bc_source">
+            <option value="Instagram Outbound">Instagram Outbound</option>
+            <option value="Instagram Inbound">Instagram Inbound</option>
+            <option value="Email">Email</option>
+            <option value="Referral">Referral</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Call Date</div>
+          <input class="form-input" id="bc_date" type="date">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Call Time</div>
+          <input class="form-input" id="bc_time" type="time">
+        </div>
+        <button class="btn btn-pink" style="height:38px" onclick="bookCall()">Book Call</button>
+      </div>
+      <div id="bc_msg" style="font-size:12px;margin-top:10px;display:none"></div>
+    </div>
+  </div>
+
+  <!-- Upcoming calls + reminder tracking -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">⏰ Upcoming Calls &amp; Reminders</div>
+      <div class="card-meta" id="upcomingMeta">Send a DM 24 hours and 1 hour before each call</div>
+    </div>
+    <div class="card-body">
+      <div id="upcomingCalls"></div>
+    </div>
+  </div>
+
   <!-- Log a lead -->
   <div class="card" style="margin-bottom:18px">
     <div class="card-header">
@@ -12115,6 +12176,203 @@ function logCall(){
   renderSalesPage();
 }
 
+// ============================================================
+// CALL BOOKING, REMINDERS & RESCHEDULING
+// A booked call carries a date/time. The outreach team sends the lead a DM
+// 24 hours and 1 hour beforehand; the dashboard flags what's due and records
+// when each reminder went out. If the lead doesn't show, the same record is
+// rescheduled rather than duplicated, keeping the history in one place.
+// ============================================================
+const REMINDER_STEPS = [
+  { key: 'r24', hours: 24, label: '24 hour' },
+  { key: 'r1',  hours: 1,  label: '1 hour'  },
+];
+
+function callDateTime(l){
+  if(!l || !l.callDate) return null;
+  const dt = new Date(`${l.callDate}T${l.callTime || '09:00'}`);
+  return isNaN(dt) ? null : dt;
+}
+function hoursUntilCall(l){
+  const dt = callDateTime(l);
+  return dt ? (dt - new Date()) / 3600000 : null;
+}
+function fmtCallWhen(l){
+  const dt = callDateTime(l);
+  if(!dt) return '';
+  return dt.toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})
+       + ' · ' + dt.toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+}
+// Human countdown: "in 3h", "in 2 days", "45 min ago"
+function fmtCountdown(h){
+  if(h === null) return '';
+  const abs = Math.abs(h);
+  const txt = abs < 1 ? Math.round(abs*60) + ' min'
+            : abs < 48 ? Math.round(abs) + 'h'
+            : Math.round(abs/24) + ' days';
+  return h >= 0 ? 'in ' + txt : txt + ' ago';
+}
+
+// Send the change to the server, then mirror it locally.
+async function saveLeadChange(leadId, changes){
+  const res = await fetch('/api/leads',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({action:'update', leadId, changes})
+  });
+  const d = await res.json();
+  if(!d.ok) throw new Error(d.error || 'save failed');
+  const i = calls.findIndex(c=>c.id===leadId);
+  if(i > -1) calls[i] = d.lead;
+  localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
+  return d.lead;
+}
+
+async function bookCall(){
+  const msg = document.getElementById('bc_msg');
+  const show = (t,c)=>{msg.style.display='block';msg.style.color=c;msg.textContent=t;};
+  const name = document.getElementById('bc_name').value.trim();
+  const date = document.getElementById('bc_date').value;
+  const time = document.getElementById('bc_time').value;
+  if(!name){ show('Name is required.','var(--red)'); return; }
+  if(!date){ show('Pick a date for the call.','var(--red)'); return; }
+  const lead = {
+    name,
+    handle: normaliseHandle(document.getElementById('bc_handle').value),
+    country: document.getElementById('bc_country').value,
+    source: document.getElementById('bc_source').value,
+    callDate: date,
+    callTime: time || '09:00',
+    booked: 'yes',
+    showed: 'no',
+  };
+  try{
+    const res = await fetch('/api/leads',{
+      method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({action:'create', lead})
+    });
+    const d = await res.json();
+    if(!d.ok) throw new Error(d.error||'could not save');
+    calls.unshift(d.lead);
+    localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
+    ['bc_name','bc_handle','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
+    show(`✓ Call booked for ${name} — ${fmtCallWhen(d.lead)}`,'var(--green)');
+    setTimeout(()=>{msg.style.display='none';},5000);
+    renderSalesPage();
+  }catch(e){
+    show('Could not save: '+e.message,'var(--red)');
+  }
+}
+
+async function markReminderSent(leadId, key){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  const reminders = {...(l.reminders||{})};
+  reminders[key] = { sentAt: new Date().toISOString(), by: (currentUser&&currentUser.name)||'' };
+  try{ await saveLeadChange(leadId,{reminders}); renderUpcomingCalls(); }
+  catch(e){ alert('Could not record that reminder: '+e.message); }
+}
+
+async function markNoShow(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  if(!confirm(`Mark ${l.name} as a no-show?\n\nYou can then set a new date if they reschedule.`)) return;
+  try{ await saveLeadChange(leadId,{showed:'no'}); renderUpcomingCalls(); }
+  catch(e){ alert('Could not save: '+e.message); }
+}
+
+async function rescheduleCall(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  const d = document.getElementById('rs_date_'+leadId).value;
+  const t = document.getElementById('rs_time_'+leadId).value;
+  if(!d){ alert('Pick the new date first.'); return; }
+  // Keep the previous slot on record rather than silently overwriting it.
+  const history = [...(l.rescheduleHistory||[]), {
+    from: l.callDate + (l.callTime?(' '+l.callTime):''),
+    at: new Date().toISOString(),
+    by: (currentUser&&currentUser.name)||''
+  }];
+  try{
+    await saveLeadChange(leadId,{
+      callDate:d, callTime:t||'09:00', showed:'no',
+      reminders:{},               // new slot needs new reminders
+      rescheduleHistory:history
+    });
+    renderUpcomingCalls();
+  }catch(e){ alert('Could not reschedule: '+e.message); }
+}
+
+function renderUpcomingCalls(){
+  const box = document.getElementById('upcomingCalls');
+  if(!box) return;
+  // Anything booked with a date that hasn't converted yet. Past calls stay
+  // visible for 7 days so no-shows can still be rescheduled.
+  const now = new Date();
+  const list = calls.filter(l=>{
+    if(l.signed==='yes' || !l.callDate) return false;
+    const h = hoursUntilCall(l);
+    return h !== null && h > -168;
+  }).sort((a,b)=> callDateTime(a) - callDateTime(b));
+
+  document.getElementById('upcomingMeta').textContent =
+    list.length ? `${list.length} scheduled · send a DM 24 hours and 1 hour before` : '';
+
+  if(!list.length){
+    box.innerHTML = `<div style="color:var(--sub);font-size:13px;padding:16px 0">No calls scheduled. Book one above and it'll appear here with its reminders.</div>`;
+    return;
+  }
+
+  box.innerHTML = list.map(l=>{
+    const h = hoursUntilCall(l);
+    const past = h < 0;
+    const rem = l.reminders||{};
+    const chips = REMINDER_STEPS.map(s=>{
+      const sent = rem[s.key];
+      if(sent){
+        const when = new Date(sent.sentAt).toLocaleDateString('en-AU',{day:'numeric',month:'short'});
+        return `<span title="Sent ${when}${sent.by?' by '+sent.by:''}" style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ ${s.label} sent</span>`;
+      }
+      const due = h !== null && h <= s.hours;
+      if(due && !past){
+        return `<button onclick="markReminderSent('${l.id}','${s.key}')" style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:3px;background:var(--pink);color:#fff;border:none;cursor:pointer">Send ${s.label} reminder →</button>`;
+      }
+      if(past){
+        return `<span style="font-size:10px;padding:3px 9px;border-radius:3px;background:rgba(255,255,255,0.04);color:var(--sub);border:1px solid rgba(255,255,255,0.08)">${s.label} not sent</span>`;
+      }
+      return `<span style="font-size:10px;padding:3px 9px;border-radius:3px;background:rgba(255,255,255,0.04);color:var(--sub);border:1px solid rgba(255,255,255,0.08)">${s.label} — not due yet</span>`;
+    }).join(' ');
+
+    const urgent = !past && h <= 24;
+    const accent = past ? 'var(--sub)' : urgent ? 'var(--red)' : 'var(--green)';
+    const ig = normaliseHandle(l.handle);
+    const rescheduled = (l.rescheduleHistory||[]).length;
+
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:6px;padding:14px 16px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-weight:600">${l.name}</span>
+              ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+              ${rescheduled?`<span title="Rescheduled ${rescheduled} time(s)" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}</span>`:''}
+            </div>
+            <div style="font-size:11px;color:var(--sub);margin-top:3px">
+              ${fmtCallWhen(l)} · <span style="color:${accent};font-weight:600">${fmtCountdown(h)}</span> · ${l.source||''}${l.bookedBy?' · booked by '+l.bookedBy:''}
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${chips}</div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${past?`<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="markNoShow('${l.id}')">Mark no-show</button>`:''}
+          <span style="font-size:11px;color:var(--sub)">Reschedule:</span>
+          <input type="date" id="rs_date_${l.id}" class="form-input" style="width:150px;font-size:11px;padding:4px 8px">
+          <input type="time" id="rs_time_${l.id}" class="form-input" style="width:110px;font-size:11px;padding:4px 8px">
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;border-color:var(--yellow);color:var(--yellow)" onclick="rescheduleCall('${l.id}')">⟲ Reschedule</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function deleteCall(id){calls=calls.filter(c=>c.id!==id);saveCalls();renderSalesPage();}
 
 // ============================================================
@@ -12202,6 +12460,7 @@ function toggleLead(id,field,val){
 // SALES PAGE
 // ============================================================
 function renderSalesPage(){
+  renderUpcomingCalls();
   const total=calls.length;
   const booked=calls.filter(c=>c.booked==='yes').length;
   const showed=calls.filter(c=>c.showed==='yes').length;
