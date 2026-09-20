@@ -12405,6 +12405,18 @@ async function bookOntoExisting(leadId){
   }
 }
 
+// Open a lead from a search result: jump to its scheduled call if it has one,
+// otherwise open the lead's record for editing.
+function goToLead(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  if(l.callDate && hoursUntilCall(l) > -168){
+    highlightUpcomingCall(leadId);
+  } else {
+    openLeadModal(leadId);
+  }
+}
+
 // Search existing leads before logging a new one.
 function searchLeads(){
   const q = document.getElementById('ll_search').value.trim();
@@ -12432,12 +12444,16 @@ function searchLeads(){
   box.innerHTML = `<div style="font-size:11px;color:var(--sub);margin-bottom:6px">${all.length} existing record${all.length>1?'s':''} found — check before logging again:</div>` +
     all.map(m=>{
       const l=m.lead; const ig=normaliseHandle(l.handle||'');
-      return `<div style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      const hasCall = l.callDate && hoursUntilCall(l) > -168;
+      return `<div onclick="goToLead('${l.id}')" title="${hasCall?'Go to their scheduled call':'Open this lead\'s record'}"
+        style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;cursor:pointer;transition:border-color .15s,background .15s"
+        onmouseover="this.style.borderColor='var(--pink)';this.style.background='rgba(233,30,140,0.06)'"
+        onmouseout="this.style.borderColor='';this.style.background='var(--surface)'">
         <div>
           <strong>${l.name}</strong>${ig?` <span style="color:var(--pink)">@${ig}</span>`:''}${l.email?` <span style="color:var(--sub)">${l.email}</span>`:''}
-          <div style="color:var(--sub);font-size:11px;margin-top:2px">Logged ${l.date||'—'} · ${leadOutcomeText(l)} · ${l.source||''}</div>
+          <div style="color:var(--sub);font-size:11px;margin-top:2px">Logged ${l.date||'—'} · ${leadOutcomeText(l)} · ${l.source||''}${hasCall?' · <span style="color:var(--yellow)">call scheduled '+fmtCallWhen(l)+'</span>':''}</div>
         </div>
-        <span style="font-size:10px;color:var(--sub);white-space:nowrap">matched on ${m.how}</span>
+        <span style="font-size:10px;color:var(--sub);white-space:nowrap">matched on ${m.how} →</span>
       </div>`;
     }).join('');
 }
@@ -12458,6 +12474,19 @@ function highlightUpcomingCall(leadId){
   };
   // let the re-render finish first
   setTimeout(go, 60);
+}
+
+// Remove the scheduled call from a lead without deleting the lead itself —
+// e.g. a call booked on someone who's already a client, or one that's been
+// called off. Their history and funnel stats stay intact.
+async function cancelScheduledCall(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  if(!confirm(`Remove the scheduled call for ${l.name}?\n\n${fmtCallWhen(l)}\n\nThe lead record and its history are kept — only the call schedule and its reminders are cleared.`)) return;
+  try{
+    await saveLeadChange(leadId,{callDate:'', callTime:'', reminders:{}});
+    renderSalesPage();
+  }catch(e){ alert('Could not remove the call: '+e.message); }
 }
 
 function renderUpcomingCalls(){
@@ -12528,6 +12557,7 @@ function renderUpcomingCalls(){
           <input type="date" id="rs_date_${l.id}" class="form-input" style="width:150px;font-size:11px;padding:4px 8px">
           <input type="time" id="rs_time_${l.id}" class="form-input" style="width:110px;font-size:11px;padding:4px 8px">
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;border-color:var(--yellow);color:var(--yellow)" onclick="rescheduleCall('${l.id}')">⟲ Reschedule</button>
+          <button class="btn btn-ghost" title="Remove this call from the schedule — the lead record is kept" style="font-size:11px;padding:4px 10px;border-color:var(--red);color:var(--red);margin-left:auto" onclick="cancelScheduledCall('${l.id}')">✕ Remove call</button>
         </div>
       </div>`;
   }).join('');
