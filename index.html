@@ -1825,7 +1825,7 @@ body{visibility:hidden}
       <div class="card-meta">Logs the lead and schedules the call</div>
     </div>
     <div class="card-body">
-      <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr 1fr .8fr auto;gap:12px;align-items:end">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end">
         <div class="form-group">
           <div class="form-label">Name</div>
           <input class="form-input" id="bc_name" placeholder="Full name">
@@ -1833,6 +1833,10 @@ body{visibility:hidden}
         <div class="form-group">
           <div class="form-label">Instagram Handle</div>
           <input class="form-input" id="bc_handle" placeholder="@handle">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Email <span style="opacity:.6">(optional)</span></div>
+          <input class="form-input" id="bc_email" placeholder="name@email.com">
         </div>
         <div class="form-group">
           <div class="form-label">Country</div>
@@ -1886,6 +1890,12 @@ body{visibility:hidden}
       <div class="card-meta">Track every lead that comes in</div>
     </div>
     <div class="card-body">
+      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div class="form-label" style="margin-bottom:6px">🔍 Check if this lead already exists</div>
+        <input class="form-input" id="ll_search" placeholder="Search by Instagram handle, email or full name…"
+               oninput="searchLeads()" style="max-width:520px">
+        <div id="ll_searchResults" style="display:none;margin-top:10px;max-width:640px"></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:12px;align-items:end;flex-wrap:wrap">
         <div class="form-group">
           <div class="form-label">Name</div>
@@ -12227,6 +12237,46 @@ async function saveLeadChange(leadId, changes){
   return d.lead;
 }
 
+// ============================================================
+// LEAD DUPLICATE DETECTION & SEARCH
+// A lead is "the same person" if their Instagram handle, email, or full
+// name matches an existing record. Handles and emails are strong matches;
+// name alone is weaker but still worth flagging.
+// ============================================================
+function leadKeyParts(l){
+  return {
+    handle: normaliseHandle(l.handle||'').toLowerCase(),
+    email: String(l.email||'').trim().toLowerCase(),
+    name: String(l.name||'').trim().toLowerCase().replace(/\s+/g,' '),
+    // some older records have an email stored in the handle field
+    handleAsEmail: String(l.handle||'').includes('@') ? String(l.handle).trim().toLowerCase() : ''
+  };
+}
+// Returns matching leads, strongest match first.
+function findExistingLeads({handle, email, name}){
+  const h = normaliseHandle(handle||'').toLowerCase();
+  const e = String(email||'').trim().toLowerCase();
+  const n = String(name||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const out = [];
+  calls.forEach(l=>{
+    const k = leadKeyParts(l);
+    let how = null;
+    if(h && k.handle && k.handle === h) how = 'Instagram handle';
+    else if(e && (k.email === e || k.handleAsEmail === e)) how = 'email';
+    else if(n && k.name === n) how = 'name';
+    if(how) out.push({lead:l, how});
+  });
+  const rank = {'Instagram handle':0,'email':1,'name':2};
+  return out.sort((a,b)=>rank[a.how]-rank[b.how]);
+}
+// Plain-English summary of where a lead got to.
+function leadOutcomeText(l){
+  if(l.signed==='yes') return 'signed up — became a client';
+  if(l.showed==='yes') return 'showed up, did not sign';
+  if(l.booked==='yes') return 'booked a call, did not show';
+  return 'logged, never booked a call';
+}
+
 async function bookCall(){
   const msg = document.getElementById('bc_msg');
   const show = (t,c)=>{msg.style.display='block';msg.style.color=c;msg.textContent=t;};
@@ -12235,9 +12285,33 @@ async function bookCall(){
   const time = document.getElementById('bc_time').value;
   if(!name){ show('Name is required.','var(--red)'); return; }
   if(!date){ show('Pick a date for the call.','var(--red)'); return; }
+
+  // Don't create a second record for someone already in the system. If it's a
+  // genuine re-engagement, the call gets scheduled onto their existing record
+  // so their history stays in one place instead of being split across rows.
+  const handleVal = document.getElementById('bc_handle').value;
+  const emailVal = document.getElementById('bc_email').value;
+  const matches = findExistingLeads({handle:handleVal, email:emailVal, name});
+  if(matches.length){
+    const m = matches[0];
+    const l = m.lead;
+    msg.style.display='block';
+    msg.style.color='var(--yellow)';
+    msg.innerHTML = `
+      ⚠ <strong>This lead has already been entered.</strong><br>
+      Matched on ${m.how}: <strong>${l.name}</strong>${l.handle?' · @'+normaliseHandle(l.handle):''}
+      — first logged ${l.date||'—'}, ${leadOutcomeText(l)}.<br>
+      <span style="color:var(--sub)">Booking cancelled so you don't get a duplicate.</span>
+      <button onclick="bookOntoExisting('${l.id}')"
+        style="margin-top:8px;display:block;background:var(--pink);color:#fff;border:none;border-radius:4px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">
+        Schedule this call on their existing record →
+      </button>`;
+    return;
+  }
   const lead = {
     name,
     handle: normaliseHandle(document.getElementById('bc_handle').value),
+    email: document.getElementById('bc_email').value.trim(),
     country: document.getElementById('bc_country').value,
     source: document.getElementById('bc_source').value,
     callDate: date,
@@ -12254,7 +12328,7 @@ async function bookCall(){
     if(!d.ok) throw new Error(d.error||'could not save');
     calls.unshift(d.lead);
     localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
-    ['bc_name','bc_handle','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
+    ['bc_name','bc_handle','bc_email','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
     show(`✓ Call booked for ${name} — ${fmtCallWhen(d.lead)}`,'var(--green)');
     setTimeout(()=>{msg.style.display='none';},5000);
     renderSalesPage();
@@ -12300,6 +12374,70 @@ async function rescheduleCall(leadId){
     });
     renderUpcomingCalls();
   }catch(e){ alert('Could not reschedule: '+e.message); }
+}
+
+// Re-engagement path: the lead already exists, so update their record with
+// the new call rather than creating a duplicate row.
+async function bookOntoExisting(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  const msg = document.getElementById('bc_msg');
+  if(!l){ msg.textContent='Could not find that lead.'; return; }
+  const date = document.getElementById('bc_date').value;
+  const time = document.getElementById('bc_time').value || '09:00';
+  if(!date){ msg.style.color='var(--red)'; msg.textContent='Pick a date first.'; return; }
+  const history = [...(l.rescheduleHistory||[])];
+  if(l.callDate) history.push({from:l.callDate+(l.callTime?' '+l.callTime:''), at:new Date().toISOString(), by:(currentUser&&currentUser.name)||''});
+  try{
+    await saveLeadChange(leadId,{
+      callDate:date, callTime:time, booked:'yes', showed:'no',
+      reminders:{}, rescheduleHistory:history
+    });
+    ['bc_name','bc_handle','bc_email','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
+    msg.style.color='var(--green)';
+    msg.textContent = `✓ New call scheduled for ${l.name} on their existing record — ${fmtCallWhen(calls.find(c=>c.id===leadId))}`;
+    setTimeout(()=>{msg.style.display='none';},6000);
+    renderSalesPage();
+  }catch(e){
+    msg.style.color='var(--red)';
+    msg.textContent='Could not save: '+e.message;
+  }
+}
+
+// Search existing leads before logging a new one.
+function searchLeads(){
+  const q = document.getElementById('ll_search').value.trim();
+  const box = document.getElementById('ll_searchResults');
+  if(!q){ box.style.display='none'; return; }
+  const matches = findExistingLeads({handle:q, email:q, name:q});
+  // also allow partial name/handle matches, since people rarely type it exactly
+  const ql = q.toLowerCase().replace(/^@/,'');
+  const partial = calls.filter(l=>
+    !matches.some(m=>m.lead.id===l.id) && (
+      String(l.name||'').toLowerCase().includes(ql) ||
+      normaliseHandle(l.handle||'').toLowerCase().includes(ql) ||
+      String(l.email||'').toLowerCase().includes(ql) ||
+      String(l.handle||'').toLowerCase().includes(ql)
+    )
+  ).map(l=>({lead:l, how:'partial match'}));
+  const all = [...matches, ...partial].slice(0,8);
+
+  box.style.display='block';
+  if(!all.length){
+    box.innerHTML = `<div style="padding:10px 12px;background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.25);border-radius:4px;font-size:12px;color:var(--green)">
+      ✓ No existing record for "${q}" — safe to log as a new lead.</div>`;
+    return;
+  }
+  box.innerHTML = `<div style="font-size:11px;color:var(--sub);margin-bottom:6px">${all.length} existing record${all.length>1?'s':''} found — check before logging again:</div>` +
+    all.map(m=>{
+      const l=m.lead; const ig=normaliseHandle(l.handle||'');
+      return `<div style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <strong>${l.name}</strong>${ig?` <span style="color:var(--pink)">@${ig}</span>`:''}${l.email?` <span style="color:var(--sub)">${l.email}</span>`:''}
+          <div style="color:var(--sub);font-size:11px;margin-top:2px">Logged ${l.date||'—'} · ${leadOutcomeText(l)} · ${l.source||''}</div>
+        </div>
+        <span style="font-size:10px;color:var(--sub);white-space:nowrap">matched on ${m.how}</span>
+      </div>`;
+    }).join('');
 }
 
 function renderUpcomingCalls(){
