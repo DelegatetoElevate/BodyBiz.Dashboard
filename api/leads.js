@@ -5,7 +5,7 @@ const KEY = 'bb_app_data';
 // Fields the outreach role is allowed to set. Deliberately excludes `signed`
 // — conversions are an admin call — and everything to do with clients.
 const OUTREACH_FIELDS = [
-  'name', 'handle', 'country', 'source',
+  'name', 'handle', 'email', 'country', 'source',
   'callDate', 'callTime', 'booked', 'showed',
   'reminders', 'rescheduleHistory', 'bookedBy', 'notes',
 ];
