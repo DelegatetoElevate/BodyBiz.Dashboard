@@ -117,6 +117,12 @@ export default async function handler(req, res) {
       if (identity.role === 'admin') {
         return res.status(200).json(data);
       }
+      // Outreach: Sales tab only. They get the leads list (needed to book calls
+      // and catch duplicates) and nothing else — no client records, revenue,
+      // pulse statuses or touch logs ever reach their browser.
+      if (identity.role === 'outreach') {
+        return res.status(200).json({ clients: [], calls: data.calls || [], touchLogs: [] });
+      }
       // Coach role: only ever see their own clients, and no lead/call data
       // (that's outside "Client Pulse" scope). Filtered here, server-side,
       // so a restricted account's browser never receives the rest of the
