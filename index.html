@@ -217,6 +217,8 @@ td{padding:10px 13px;font-size:13px;vertical-align:middle}
   font-weight:600;letter-spacing:.5px;text-transform:uppercase;
 }
 /* Coach view banner */
+/* Hidden for the outreach role, which works the Sales tab only */
+body.role-outreach .admin-only{display:none !important}
 #coachBanner {
   background:linear-gradient(90deg,rgba(233,30,140,0.15),rgba(0,229,160,0.1));
   border-bottom:1px solid rgba(233,30,140,0.2);
@@ -1689,7 +1691,7 @@ body{visibility:hidden}
       <div class="kpi-label">Converted</div>
       <div class="kpi-value" id="s_converted" style="color:var(--green)">63</div>
       <div class="kpi-sub">became clients</div><div class="kpi-delta" id="s_conv_rate">53% close rate</div></div>
-    <div class="kpi" style="animation:none"><div class="kpi-accent" style="background:var(--pink)"></div>
+    <div class="kpi admin-only" style="animation:none"><div class="kpi-accent" style="background:var(--pink)"></div>
       <div class="kpi-label">Revenue from Calls</div>
       <div class="kpi-value" id="s_rev" style="color:var(--pink)">—</div>
       <div class="kpi-sub">AUD · converted only</div></div>
@@ -1897,6 +1899,7 @@ body{visibility:hidden}
                oninput="searchLeads()" style="max-width:520px">
         <div id="ll_searchResults" style="display:none;margin-top:10px;max-width:640px"></div>
       </div>
+      <div class="admin-only">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:12px;align-items:end;flex-wrap:wrap">
         <div class="form-group">
           <div class="form-label">Name</div>
@@ -1953,6 +1956,7 @@ body{visibility:hidden}
             <button id="sl_signed_no" class="toggle-btn active-no" onclick="setToggle(&#39;signed&#39;,&#39;no&#39;)">NO</button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   </div>
@@ -11171,9 +11175,14 @@ async function syncFromServer(){
       touchLogs = merged;
       localStorage.setItem('bb_touchlogs', JSON.stringify(touchLogs));
       // If we contributed anything the server didn't have, push it back up.
-      if(changed) syncToServer();
+      if(changed && currentUser && currentUser.role === 'admin') syncToServer();
     }
-    if(!d||!Array.isArray(d.clients)||!d.clients.length){
+    // Only admin can write the full dataset. Other roles receive a filtered
+    // (or, for outreach, empty) client list by design — that must never be
+    // mistaken for an empty database and 'seeded' back over the real one.
+    if(currentUser && currentUser.role !== 'admin'){
+      if(currentUser.role === 'outreach') clients = [];
+    } else if(!d||!Array.isArray(d.clients)||!d.clients.length){
       // Nothing saved on the server yet — seed it with the baked-in starting data
       syncToServer();
     }
@@ -12766,7 +12775,7 @@ function renderCallsTable(){
 
   document.getElementById('callsTableBody').innerHTML=list.length
     ?list.map(c=>`<tr>
-      <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}</td>
+      <td style="font-weight:500;${currentUser&&currentUser.role==='outreach'?'':'cursor:pointer'}" onclick="if(!(currentUser&&currentUser.role==='outreach'))openLeadModal('${c.id}')">${c.name}</td>
       <td style="color:var(--pink);font-size:12px">${c.handle?'@'+c.handle:'—'}</td>
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.source||'—'}</td>
@@ -12775,8 +12784,8 @@ function renderCallsTable(){
       <td>${yn(c.id,'showed',c.showed||'no')}</td>
       <td>${yn(c.id,'signed',c.signed||'no')}</td>
       <td style="display:flex;gap:5px">
-        <button class="btn btn-ghost btn-sm" onclick="openLeadModal('${c.id}')">Edit</button>
-        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteCall('${c.id}')" style="color:var(--red);border-color:var(--red)">✕</button>
+        <button class="btn btn-ghost btn-sm admin-only" onclick="openLeadModal('${c.id}')">Edit</button>
+        <button class="btn btn-ghost btn-sm admin-only" onclick="event.stopPropagation();deleteCall('${c.id}')" style="color:var(--red);border-color:var(--red)">✕</button>
       </td>
     </tr>`).join('')
     :'<tr><td colspan="9" style="text-align:center;color:var(--sub);padding:30px">No leads yet</td></tr>';
@@ -13680,6 +13689,7 @@ async function pollSharedData(opts){
     const id = active ? active.id : '';
     if(id === 'page-touchpoints' && typeof renderTouchPoints === 'function') renderTouchPoints();
     else if(id === 'page-pulse' && typeof renderPulse === 'function') renderPulse();
+    else if(id === 'page-sales' && typeof renderSalesPage === 'function') renderSalesPage();
     else if(typeof renderAll === 'function') renderAll();
   }catch(e){
     // Offline or a hiccup — try again on the next tick rather than erroring at the user.
@@ -13735,6 +13745,25 @@ function applyAccessLevel() {
       bannerText.textContent = `👋 Logged in as ${currentUser.name} · Admin — full access`;
     }
     banner.classList.add('visible');
+    return;
+  }
+
+  // Outreach role — Sales tab only. They book calls, send reminders and
+  // reschedule no-shows. Anything admin-only (logging outcomes, editing or
+  // deleting leads, revenue) is hidden via the .admin-only class, and the
+  // server refuses to send them client, pulse or revenue data regardless.
+  if (currentUser.role === 'outreach') {
+    document.body.classList.add('role-outreach');
+    banner.classList.add('visible');
+    if (bannerText) {
+      bannerText.textContent = `👋 Logged in as ${currentUser.name} · Outreach view — Sales only`;
+    }
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      const m = (tab.getAttribute('onclick')||'').match(/showPage\(['"]([^'"]+)['"]\)/);
+      if (!m || m[1] !== 'sales') tab.style.display = 'none';
+    });
+    document.querySelectorAll('header button, .header-actions, .fx-bar').forEach(b => b.style.display = 'none');
+    showPage('sales');
     return;
   }
 
