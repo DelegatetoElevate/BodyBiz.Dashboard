@@ -1559,6 +1559,38 @@ function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;
 //    by another record pointing at this one via resignedFromId. Shows how
 //    long they were away between leaving and coming back.
 // ============================================================
+// The handle describes the person, not a contract — so every stint of the
+// same client should show it, even if it was only ever entered on one of
+// them (e.g. added to the new record after a re-sign, or recorded on an old
+// stint before re-signs copied it across). Walks the whole family of linked
+// records, earliest first.
+function stintFamily(c){
+  if(!c) return [];
+  // walk back to the first stint
+  let root = c, guard = 0;
+  while(root.resignedFromId && guard++ < 20){
+    const prev = clients.find(x => x.id === root.resignedFromId);
+    if(!prev) break;
+    root = prev;
+  }
+  // then collect every record descending from it
+  const fam = [root], queue = [root.id];
+  guard = 0;
+  while(queue.length && guard++ < 50){
+    const id = queue.shift();
+    clients.forEach(x => {
+      if(x.resignedFromId === id && !fam.includes(x)){ fam.push(x); queue.push(x.id); }
+    });
+  }
+  return fam;
+}
+function resolveHandle(c){
+  if(!c) return '';
+  if(c.instagram) return c.instagram;
+  const found = stintFamily(c).find(x => x.instagram);
+  return found ? found.instagram : '';
+}
+
 function fmtShortDate(d){
   if(!d) return '';
   const dt = new Date(d);
@@ -2338,7 +2370,7 @@ function renderClientTable(){
     ?list.map(c=>{
       const cx=c.currency||'AUD';const sb=c.status==='active'?'badge-active':c.status==='churned'?'badge-churned':'badge-paused';
       return `<tr onclick="openEdit('${c.id}')">
-        <td style="font-weight:500">${c.name}${isDNC(c)?' '+dncBadge(c):''}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(c.instagram)}</div></td>
+        <td style="font-weight:500">${c.name}${isDNC(c)?' '+dncBadge(c):''}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(resolveHandle(c))}</div></td>
         <td>${c.coach}</td><td><span class="badge ${sb}">${c.status}</span></td>
         <td><span class="badge ${cxB[cx]||''}">${CX[cx].flag} ${cx}</span></td>
         <td>${rateDisplay(c)} ${c.billing==='weekly'?'<span style="font-size:10px;color:var(--yellow);background:rgba(255,196,0,0.12);padding:1px 5px;border-radius:2px">WK</span>':c.billing==='pif_months'?'<span style="font-size:10px;color:#a259ff;background:rgba(162,89,255,0.12);padding:1px 5px;border-radius:2px">PIF</span>':c.billing==='weekly_upfront'?(upfrontPhase(c)?'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">UPFRONT</span>':'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">WK SUB</span>'):c.billing==='monthly_upfront'?'<span style="font-size:10px;color:#5c9aff;background:rgba(41,121,255,0.12);padding:1px 5px;border-radius:2px">MO+</span>':''}</td>
@@ -2427,7 +2459,7 @@ function openEdit(id){
   document.getElementById('m_source').value=c.source||'Instagram Inbound';
   document.getElementById('m_resign').value=c.resign||'no';
   document.getElementById('m_reason').value=c.reason||'';
-  document.getElementById('m_instagram').value=c.instagram||'';
+  document.getElementById('m_instagram').value=resolveHandle(c)||'';
   const dncEl=document.getElementById('m_dnc');
   dncEl.checked=!!c.dnc;
   document.getElementById('dncLabel').textContent=dncEl.checked?'⛔ Do not message':'Do not message';
@@ -2493,7 +2525,7 @@ function getFilteredClients(){
   const fcx=document.getElementById('filterCurrency')?.value||'';
   const fsrc=document.getElementById('filterSource')?.value||'';
   return clients.filter(c=>{
-    if(q&&!(c.name.toLowerCase().includes(q)||normaliseHandle(c.instagram).toLowerCase().includes(q)))return false;
+    if(q&&!(c.name.toLowerCase().includes(q)||normaliseHandle(resolveHandle(c)).toLowerCase().includes(q)))return false;
     if(fs&&c.status!==fs)return false;
     if(fc&&c.coach!==fc)return false;
     if(fcx&&(c.currency||'AUD')!==fcx)return false;
@@ -2523,7 +2555,7 @@ function exportCSV(){
     const pd=pulseData[c.id]||{};
     const age=pulseAgeDays(c.id);
     return [
-      c.name, normaliseHandle(c.instagram)?'@'+normaliseHandle(c.instagram):'',
+      c.name, normaliseHandle(resolveHandle(c))?'@'+normaliseHandle(resolveHandle(c)):'',
       isDNC(c)?'DO NOT CONTACT':'',
       c.coach, c.status,
       PL[pd.status]||'Not Set', pd.note||'', pd.updatedAt||'', age===null?'':age,
@@ -2585,7 +2617,7 @@ function exportPulseCSV(){
   const rows=sorted.map(c=>{
     const pd=pulseData[c.id]||{};
     const age=pulseAgeDays(c.id);
-    const h2=normaliseHandle(c.instagram);
+    const h2=normaliseHandle(resolveHandle(c));
     return [
       PL[pd.status]||'Not Set', c.name,
       h2?'@'+h2:'', h2?igUrl(h2):'',
@@ -3488,7 +3520,7 @@ function openPulseModal(clientId){
   pulseCurrentStatus = existing.status || null;
 
   document.getElementById('pulseModalTitle').textContent = c.name + ' — Update Status';
-  const igh = normaliseHandle(c.instagram);
+  const igh = normaliseHandle(resolveHandle(c));
   document.getElementById('pulseModalContent').innerHTML = `
     ${(isResign(c)||hasReturned(c)||isDNC(c))?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">${dncBadge(c,{size:'11px'})}${resignBadge(c,{size:'11px'})}${returnBadge(c,{size:'11px'})}</div>`:''}
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px">
@@ -3701,7 +3733,7 @@ function renderPulse(){
               <div style="font-size:11px;color:var(--sub);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <span>${c.coach} · ${daysActive}d active${(currentUser && currentUser.role==='coach') ? '' : ` · ${fmtAUD(rateAUD(c))}/mo`}</span>
               </div>
-              <div style="margin-bottom:6px">${igLink(c.instagram)}</div>
+              <div style="margin-bottom:6px">${igLink(resolveHandle(c))}</div>
               ${pd.note?`<div style="font-size:12px;color:var(--white);background:var(--surface);border-radius:4px;padding:6px 8px;margin-bottom:6px">${pd.note}</div>`:''}
               ${pd.updatedAt?`<div>${pulseFreshnessLabel(c.id)}${pd.updatedBy?`<span style="font-size:10px;color:var(--sub)"> · ${pd.updatedBy}</span>`:''}</div>`:`<div style="font-size:10px;color:var(--sub);font-style:italic">Tap to set status</div>`}
             </div>`;
@@ -4131,7 +4163,7 @@ function openTpModal(clientId, days) {
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--sub);margin-bottom:6px">Instagram Handle</div>
       <div style="display:flex;gap:8px;align-items:center">
         <span style="color:var(--sub);font-size:14px">@</span>
-        <input class="form-input" id="tpInstagram" placeholder="username" value="${c.instagram || ''}" style="flex:1">
+        <input class="form-input" id="tpInstagram" placeholder="username" value="${resolveHandle(c) || ''}" style="flex:1">
         <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px;white-space:nowrap" onclick="saveInstagramHandle('${c.id}')">Save</button>
       </div>
       <div id="tpInstagramSaved" style="font-size:11px;color:var(--green);margin-top:4px;display:none">✓ Saved</div>
