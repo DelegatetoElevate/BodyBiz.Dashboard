@@ -59,6 +59,15 @@ export default async function handler(request) {
     });
   }
 
+  // Outreach works the Sales tab only — client health statuses are none of
+  // their business, so refuse outright rather than returning a filtered set.
+  if (identity.role === 'outreach') {
+    return new Response(JSON.stringify(request.method === 'GET' ? {} : { ok: false, error: 'Not authorised' }), {
+      status: request.method === 'GET' ? 200 : 403,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
   if (request.method === 'GET') {
     try {
       const [pulseResult, dataResult] = await Promise.all([
