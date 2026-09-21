@@ -3881,7 +3881,7 @@ function saveResign(){
     // the contract, so they shouldn't be lost when a new record is created.
     // Without this the handle had to be re-entered after every re-sign, and a
     // Do Not Contact flag would silently disappear.
-    instagram:orig.instagram||'',
+    instagram:resolveHandle(orig)||'',   // from any earlier stint, not just the last one
     dnc:!!orig.dnc,
     resign:'yes',
     resignedFromId:resigningFromId,
