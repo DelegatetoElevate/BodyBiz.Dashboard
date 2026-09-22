@@ -4181,7 +4181,20 @@ function saveInstagramHandle(clientId) {
   // Was calling saveData() — that's the "Save Data" *export* (triggers a file
   // download) and never persisted anything, so handles entered here were lost.
   // save() is the real persist-to-shared-storage call.
-  c.instagram = normaliseHandle(document.getElementById('tpInstagram').value);
+  const newHandle = normaliseHandle(document.getElementById('tpInstagram').value);
+  // Never save a blank over an existing handle. If the field shows empty
+  // because of a stale page or slow load, clicking Save would otherwise
+  // silently erase a handle someone else entered.
+  if (!newHandle) {
+    alert('Enter a handle before saving. (Blank saves are blocked so an existing handle can\'t be erased by accident.)');
+    return;
+  }
+  const existing = normaliseHandle(resolveHandle(c));
+  if (existing && existing !== newHandle &&
+      !confirm(`${c.name} already has the handle @${existing}.\n\nReplace it with @${newHandle}?`)) {
+    return;
+  }
+  c.instagram = newHandle;
   save();
   const saved = document.getElementById('tpInstagramSaved');
   saved.style.display = 'block';
