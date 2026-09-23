@@ -4255,7 +4255,11 @@ syncFromServer().then(function(){
   // showing that page's *stale exported markup* rather than content rendered
   // from current data — and no nav tab appears selected. applyAccessLevel()
   // overrides this to 'pulse' for coach logins.
+  // Draw the landing page for whichever role is logged in. Without this only
+  // admin re-rendered after load, so restricted roles saw an empty page.
   if(!currentUser || currentUser.role === 'admin') showPage('overview');
+  else if(currentUser.role === 'outreach') showPage('sales');
+  else showPage('pulse');
 });
 
 
@@ -4367,6 +4371,22 @@ function logout() {
   window.location.href = '/api/logout';
 }
 
+// Hide the admin data controls (Save Data, Load Data, Export) for restricted
+// roles. Deliberately targets those buttons rather than every button in the
+// header — the nav tabs live in the header too, and blanket-hiding them left
+// restricted users with no visible tabs at all.
+function hideDataControls(){
+  document.querySelectorAll('button, label, input[type=file]').forEach(el=>{
+    if(el.classList && el.classList.contains('nav-tab')) return;
+    const oc = (el.getAttribute('onclick')||'') + (el.getAttribute('onchange')||'');
+    const txt = (el.textContent||'');
+    if(/saveData|importFile|exportCSV|loadData/i.test(oc) || /save data|load data|export csv/i.test(txt)){
+      el.style.display = 'none';
+    }
+  });
+  document.querySelectorAll('.header-actions, .fx-bar').forEach(b => b.style.display = 'none');
+}
+
 function applyAccessLevel() {
   const banner = document.getElementById('coachBanner');
   const bannerText = document.getElementById('coachBannerText');
@@ -4399,7 +4419,7 @@ function applyAccessLevel() {
       const m = (tab.getAttribute('onclick')||'').match(/showPage\(['"]([^'"]+)['"]\)/);
       if (!m || m[1] !== 'sales') tab.style.display = 'none';
     });
-    document.querySelectorAll('header button, .header-actions, .fx-bar').forEach(b => b.style.display = 'none');
+    hideDataControls();
     showPage('sales');
     return;
   }
@@ -4418,8 +4438,7 @@ function applyAccessLevel() {
   });
 
   // Hide header controls (save/load data buttons)
-  const headerBtns = document.querySelectorAll('header button, .header-actions, .fx-bar');
-  headerBtns.forEach(b => b.style.display = 'none');
+  hideDataControls();
 
   // Hide the "All Coaches" filter on Client Pulse — a coach only ever
   // sees their own clients anyway (enforced server-side), so filtering
