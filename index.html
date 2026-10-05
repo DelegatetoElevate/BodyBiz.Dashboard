@@ -4510,11 +4510,18 @@ async function pollSharedData(opts){
       // Merge by id rather than replacing wholesale: if someone else added a
       // client seconds ago, a straight replace could drop a record that only
       // exists locally and hasn't been confirmed yet.
-      if(d && Array.isArray(d.clients) && d.clients.length && !anyModalOpen() && !_pendingLocalWrite){
-        const serverIds = new Set(d.clients.map(c=>c.id));
-        const localOnly = clients.filter(c=>!serverIds.has(c.id));
-        clients = [...d.clients, ...localOnly];
-        if(Array.isArray(d.calls) && d.calls.length){
+      if(!anyModalOpen() && !_pendingLocalWrite){
+        // Clients: outreach legitimately receives an empty list, so only
+        // replace when the server actually sent some.
+        if(d && Array.isArray(d.clients) && d.clients.length){
+          const serverIds = new Set(d.clients.map(c=>c.id));
+          const localOnly = clients.filter(c=>!serverIds.has(c.id));
+          clients = [...d.clients, ...localOnly];
+        }
+        // Leads refresh for every role. This used to sit inside the clients
+        // block, so outreach never saw another person's bookings or sent
+        // reminders without a full page reload.
+        if(d && Array.isArray(d.calls) && d.calls.length){
           const sIds = new Set(d.calls.map(c=>c.id));
           calls = [...d.calls, ...calls.filter(c=>!sIds.has(c.id))];
         }
