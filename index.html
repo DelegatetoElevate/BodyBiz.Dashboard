@@ -219,6 +219,8 @@ td{padding:10px 13px;font-size:13px;vertical-align:middle}
 /* Coach view banner */
 /* Hidden for the outreach role, which works the Sales tab only */
 body.role-outreach .admin-only{display:none !important}
+.sf-preset{background:none;border:1px solid var(--border);color:var(--sub);border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;margin:0 2px}
+.sf-preset:hover{border-color:var(--pink);color:var(--pink)}
 #coachBanner {
   background:linear-gradient(90deg,rgba(233,30,140,0.15),rgba(0,229,160,0.1));
   border-bottom:1px solid rgba(233,30,140,0.2);
@@ -621,6 +623,46 @@ body{visibility:hidden}
     </div>
     <div class="card-body">
       <div id="upcomingCalls"></div>
+    </div>
+  </div>
+
+  <!-- Start-date follow-ups: remind the lead about beginning the program -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">📣 Start Date Follow-Ups</div>
+      <div class="card-meta" id="startFollowMeta">Remind a lead about starting the program</div>
+    </div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:1.1fr 1fr 1fr 1.4fr auto;gap:12px;align-items:end;margin-bottom:6px">
+        <div class="form-group">
+          <div class="form-label">Instagram Handle <span style="color:var(--pink)">*</span></div>
+          <input class="form-input" id="sf_handle" placeholder="@handle" oninput="sfLookup()">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Program Start Date</div>
+          <input class="form-input" id="sf_start" type="date" onchange="sfPreset(null)">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Remind On <span style="color:var(--pink)">*</span></div>
+          <input class="form-input" id="sf_due" type="date">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Note</div>
+          <input class="form-input" id="sf_note" placeholder="e.g. confirm they're ready to start">
+        </div>
+        <button class="btn btn-pink" style="height:38px" onclick="addStartFollowUp()">Add Reminder</button>
+      </div>
+      <div style="font-size:11px;color:var(--sub);margin-bottom:10px">
+        Remind me
+        <button class="sf-preset" onclick="sfPreset(3)">3 days</button>
+        <button class="sf-preset" onclick="sfPreset(7)">1 week</button>
+        <button class="sf-preset" onclick="sfPreset(14)">2 weeks</button>
+        <button class="sf-preset" onclick="sfPreset(30)">1 month</button>
+        before the start date
+        <span id="sf_match" style="margin-left:10px"></span>
+      </div>
+      <div id="sf_msg" style="font-size:12px;margin-bottom:10px;display:none"></div>
+      <div id="startFollowUps"></div>
     </div>
   </div>
 
@@ -3128,6 +3170,161 @@ async function cancelScheduledCall(leadId){
   }catch(e){ alert('Could not remove the call: '+e.message); }
 }
 
+// ============================================================
+// START DATE FOLLOW-UPS
+// A reminder to message a lead about beginning the program. The gap before
+// the start date varies per person (whatever Luke agrees with them), so each
+// reminder carries its own due date rather than a fixed interval.
+// Sending the message is the whole job — Luke takes it from there.
+// ============================================================
+
+// Fill the "remind on" date from the start date, e.g. 7 days before.
+function sfPreset(daysBefore){
+  const startEl = document.getElementById('sf_start');
+  const dueEl = document.getElementById('sf_due');
+  if(!startEl.value) {
+    if(daysBefore !== null) alert('Set the program start date first, then pick an interval.');
+    return;
+  }
+  if(daysBefore === null) return;          // start date changed, don't auto-fill
+  const d = new Date(startEl.value);
+  d.setDate(d.getDate() - daysBefore);
+  dueEl.value = d.toISOString().slice(0,10);
+}
+
+// Show whether the handle matches a lead we already know, so the reminder
+// attaches to their record rather than floating free.
+function sfLookup(){
+  const h = normaliseHandle(document.getElementById('sf_handle').value);
+  const el = document.getElementById('sf_match');
+  if(!h){ el.innerHTML=''; return; }
+  const hit = calls.find(c => normaliseHandle(c.handle||'').toLowerCase() === h.toLowerCase());
+  el.innerHTML = hit
+    ? `<span style="color:var(--green)">✓ matches ${hit.name}</span>`
+    : `<span style="color:var(--yellow)">new — will be added as a lead</span>`;
+}
+
+async function addStartFollowUp(){
+  const msg = document.getElementById('sf_msg');
+  const show = (t,c)=>{msg.style.display='block';msg.style.color=c;msg.textContent=t;};
+  const handle = normaliseHandle(document.getElementById('sf_handle').value);
+  const start = document.getElementById('sf_start').value;
+  const due = document.getElementById('sf_due').value;
+  const note = document.getElementById('sf_note').value.trim();
+  if(!handle){ show('Instagram handle is required.','var(--red)'); return; }
+  if(!due){ show('Set the date you want to be reminded.','var(--red)'); return; }
+
+  const followUp = { startDate:start||'', dueDate:due, note, sent:false,
+                     addedBy:(currentUser&&currentUser.name)||'', addedAt:new Date().toISOString() };
+  try{
+    const existing = calls.find(c => normaliseHandle(c.handle||'').toLowerCase() === handle.toLowerCase());
+    if(existing){
+      await saveLeadChange(existing.id, {followUp});
+      show(`✓ Reminder set for ${existing.name} — ${fmtShortDate(due)}`,'var(--green)');
+    }else{
+      // Not a known lead yet; create a minimal record so the reminder has a home.
+      const res = await fetch('/api/leads',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({action:'create', lead:{handle, name:'@'+handle, source:'Instagram Outbound', booked:'no', followUp}})});
+      const d = await res.json();
+      if(!d.ok) throw new Error(d.error||'could not save');
+      calls.unshift(d.lead);
+      localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
+      show(`✓ Reminder set for @${handle} — ${fmtShortDate(due)}`,'var(--green)');
+    }
+    ['sf_handle','sf_start','sf_due','sf_note'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('sf_match').innerHTML='';
+    setTimeout(()=>{msg.style.display='none';},5000);
+    renderStartFollowUps();
+  }catch(e){ show('Could not save: '+e.message,'var(--red)'); }
+}
+
+async function markFollowUpSent(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l || !l.followUp) return;
+  const fu = {...l.followUp, sent:true, sentAt:new Date().toISOString(), by:(currentUser&&currentUser.name)||''};
+  try{ await saveLeadChange(leadId,{followUp:fu}); renderStartFollowUps(); }
+  catch(e){ alert('Could not record that: '+e.message); }
+}
+
+async function snoozeFollowUp(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l || !l.followUp) return;
+  const d = prompt(`Push the reminder for ${l.name} to which date?\n\nCurrently ${l.followUp.dueDate}`, l.followUp.dueDate);
+  if(!d) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ alert('Use the format YYYY-MM-DD.'); return; }
+  const fu = {...l.followUp, dueDate:d, sent:false};
+  try{ await saveLeadChange(leadId,{followUp:fu}); renderStartFollowUps(); }
+  catch(e){ alert('Could not save: '+e.message); }
+}
+
+async function removeFollowUp(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  if(!confirm(`Remove the start-date reminder for ${l.name}?\n\nThe lead record itself is kept.`)) return;
+  try{ await saveLeadChange(leadId,{followUp:null}); renderStartFollowUps(); }
+  catch(e){ alert('Could not remove it: '+e.message); }
+}
+
+function renderStartFollowUps(){
+  const box = document.getElementById('startFollowUps');
+  if(!box) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  // Keep sent ones visible for a week so there's a record of what went out.
+  const list = calls.filter(l=>{
+    const f = l.followUp;
+    if(!f || !f.dueDate) return false;
+    if(!f.sent) return true;
+    const sentAt = f.sentAt ? new Date(f.sentAt) : null;
+    return !sentAt || (today - sentAt)/86400000 < 7;
+  }).sort((a,b)=>{
+    if(a.followUp.sent !== b.followUp.sent) return a.followUp.sent ? 1 : -1;
+    return a.followUp.dueDate < b.followUp.dueDate ? -1 : 1;
+  });
+
+  const dueNow = list.filter(l=>!l.followUp.sent && new Date(l.followUp.dueDate) <= today).length;
+  document.getElementById('startFollowMeta').textContent =
+    list.length ? `${dueNow} to send now · ${list.length} tracked` : 'Remind a lead about starting the program';
+
+  if(!list.length){
+    box.innerHTML = `<div style="color:var(--sub);font-size:13px;padding:12px 0">No start-date reminders yet. Add one above.</div>`;
+    return;
+  }
+
+  box.innerHTML = list.map(l=>{
+    const f = l.followUp;
+    const due = new Date(f.dueDate); due.setHours(0,0,0,0);
+    const days = Math.round((due - today)/86400000);
+    const overdue = !f.sent && days < 0;
+    const dueToday = !f.sent && days === 0;
+    const accent = f.sent ? 'var(--green)' : overdue ? 'var(--red)' : dueToday ? 'var(--pink)' : 'var(--sub)';
+    const when = f.sent ? `Sent ${fmtShortDate(f.sentAt)}${f.by?' by '+f.by:''}`
+               : overdue ? `${Math.abs(days)} day${Math.abs(days)===1?'':'s'} overdue`
+               : dueToday ? 'Send today'
+               : `in ${days} day${days===1?'':'s'}`;
+    const ig = normaliseHandle(l.handle||'');
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:6px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-weight:600">${l.name}</span>
+            ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+            ${f.sent?`<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SENT</span>`:''}
+          </div>
+          <div style="font-size:11px;color:var(--sub);margin-top:3px">
+            <span style="color:${accent};font-weight:600">${when}</span>
+            · remind ${fmtShortDate(f.dueDate)}${f.startDate?` · starts ${fmtShortDate(f.startDate)}`:''}${f.addedBy?` · added by ${f.addedBy}`:''}
+          </div>
+          ${f.note?`<div style="font-size:11px;color:var(--sub);margin-top:5px;background:#111;border-radius:4px;padding:6px 9px">${f.note}</div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          ${!f.sent?`<button onclick="markFollowUpSent('${l.id}')" style="background:var(--pink);color:#fff;border:none;border-radius:4px;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer">Mark sent</button>`:''}
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 9px" onclick="snoozeFollowUp('${l.id}')">Snooze</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 9px;border-color:var(--red);color:var(--red)" onclick="removeFollowUp('${l.id}')">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function renderUpcomingCalls(){
   const box = document.getElementById('upcomingCalls');
   if(!box) return;
@@ -3290,6 +3487,7 @@ function toggleLead(id,field,val){
 // ============================================================
 function renderSalesPage(){
   renderUpcomingCalls();
+  renderStartFollowUps();
   const total=calls.length;
   const booked=calls.filter(c=>c.booked==='yes').length;
   const showed=calls.filter(c=>c.showed==='yes').length;
