@@ -163,6 +163,38 @@ export default async function handler(req, res) {
     }
     try {
       const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+      // Scheduling fields are owned by /api/leads, which outreach writes to
+      // one lead at a time. This endpoint receives a whole dataset from one
+      // browser's memory, so without this merge an admin saving from a tab
+      // opened earlier would overwrite reminders or bookings made since —
+      // silently reverting them. Keep whatever the server already holds for
+      // these fields unless this request is genuinely newer.
+      const LEAD_SCHEDULING_FIELDS = [
+        'callDate', 'callTime', 'reminders', 'rescheduleHistory', 'followUp', 'bookedBy',
+      ];
+      try {
+        const currentRaw = await kvCommand(['GET', KEY]);
+        const current = currentRaw && currentRaw.result ? JSON.parse(currentRaw.result) : null;
+        if (current && Array.isArray(current.calls) && Array.isArray(payload.calls)) {
+          const serverById = new Map(current.calls.map((c) => [c.id, c]));
+          payload.calls = payload.calls.map((lead) => {
+            const server = serverById.get(lead.id);
+            if (!server) return lead;              // genuinely new lead
+            const merged = { ...lead };
+            LEAD_SCHEDULING_FIELDS.forEach((f) => {
+              if (server[f] !== undefined) merged[f] = server[f];
+            });
+            return merged;
+          });
+          // Don't drop leads created elsewhere since this browser loaded.
+          const sentIds = new Set(payload.calls.map((c) => c.id));
+          current.calls.forEach((c) => { if (!sentIds.has(c.id)) payload.calls.push(c); });
+        }
+      } catch (e) {
+        console.error('Could not merge lead scheduling fields:', e);
+      }
+
       await kvCommand(['SET', KEY, JSON.stringify(payload)]);
       mirrorClientsToSheet(payload && payload.clients).catch((e) => console.error('Sheets clients mirror failed:', e));
       mirrorLeadsToSheet(payload && payload.calls).catch((e) => console.error('Sheets leads mirror failed:', e));
