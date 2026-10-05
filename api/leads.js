@@ -8,6 +8,7 @@ const OUTREACH_FIELDS = [
   'name', 'handle', 'email', 'country', 'source',
   'callDate', 'callTime', 'booked', 'showed',
   'reminders', 'rescheduleHistory', 'bookedBy', 'notes',
+  'followUp',   // start-date reminder: { startDate, dueDate, note, sent, sentAt, by }
 ];
 const ADMIN_FIELDS = [...OUTREACH_FIELDS, 'signed', 'date'];
 
