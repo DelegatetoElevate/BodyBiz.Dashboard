@@ -689,11 +689,11 @@ body{visibility:hidden}
       <div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:12px;align-items:end;flex-wrap:wrap">
         <div class="form-group">
-          <div class="form-label">Name</div>
+          <div class="form-label">Name <span style="opacity:.6;font-weight:400">(optional)</span></div>
           <input class="form-input" id="sl_name" placeholder="Full name">
         </div>
         <div class="form-group">
-          <div class="form-label">Instagram Handle</div>
+          <div class="form-label">Instagram Handle <span style="color:var(--pink)">*</span></div>
           <input class="form-input" id="sl_handle" placeholder="@handle">
         </div>
         <div class="form-group">
@@ -1360,7 +1360,7 @@ body{visibility:hidden}
           <button class="toggle-btn" id="lm_showed_yes" onclick="setLeadToggle(&#39;showed&#39;,&#39;yes&#39;)">YES</button>
           <button class="toggle-btn active-no" id="lm_showed_no" onclick="setLeadToggle(&#39;showed&#39;,&#39;no&#39;)">NO</button>
         </div>
-        <div style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub)">Signed
+        <div class="admin-only" style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--sub)">Signed
           <button class="toggle-btn" id="lm_signed_yes" onclick="setLeadToggle(&#39;signed&#39;,&#39;yes&#39;)">YES</button>
           <button class="toggle-btn active-no" id="lm_signed_no" onclick="setLeadToggle(&#39;signed&#39;,&#39;no&#39;)">NO</button>
         </div>
@@ -1368,7 +1368,7 @@ body{visibility:hidden}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeLeadModal()">Cancel</button>
-      <button class="btn btn-red" onclick="deleteLeadFromModal()">Delete</button>
+      <button class="btn btn-red admin-only" onclick="deleteLeadFromModal()">Delete</button>
       <button class="btn btn-pink" onclick="saveLeadModal()">Save</button>
     </div>
   </div>
@@ -2852,7 +2852,7 @@ function outcomeFromToggles(b,sh,si){
 async function logCall(){
   const name=document.getElementById('sl_name').value.trim();
   const handle=normaliseHandle(document.getElementById('sl_handle').value);
-  if(!name && !handle){alert('Enter a name or an Instagram handle.');return;}
+  if(!handle){alert('Instagram handle is required. The name can be added later.');return;}
   const lead={
     name,
     handle,
@@ -3489,22 +3489,33 @@ function updateLeadToggleUI(field){
   no.className='toggle-btn'+(val==='no'?' active-no':'');
 }
 
-function saveLeadModal(){
+async function saveLeadModal(){
   if(!editingLeadId)return;
-  const name=document.getElementById('lm_name').value.trim();
-  if(!name){alert('Name required');return;}
+  const handle=normaliseHandle(document.getElementById('lm_handle').value);
+  if(!handle){alert('Instagram handle is required.');return;}
   const c=calls.find(x=>x.id===editingLeadId);
   if(!c)return;
-  c.name=name;
-  c.handle=document.getElementById('lm_handle').value.trim().replace('@','');
-  c.country=document.getElementById('lm_country').value;
-  c.source=document.getElementById('lm_source').value;
-  c.date=document.getElementById('lm_date').value;
-  c.notes=document.getElementById('lm_notes').value;
-  c.booked=leadToggleState.booked;
-  c.showed=leadToggleState.showed;
-  c.signed=leadToggleState.signed;
-  saveCalls();
+  // Name is optional — a lead is often logged with just the handle and named
+  // later once it's known.
+  const changes={
+    name:document.getElementById('lm_name').value.trim() || ('@'+handle),
+    handle,
+    country:document.getElementById('lm_country').value,
+    source:document.getElementById('lm_source').value,
+    date:document.getElementById('lm_date').value,
+    notes:document.getElementById('lm_notes').value,
+    booked:leadToggleState.booked,
+    showed:leadToggleState.showed,
+    signed:leadToggleState.signed,
+  };
+  try{
+    // Via /api/leads so outreach can edit too, and so one person's save can't
+    // overwrite another's work. The server ignores any field a role may not set.
+    await saveLeadChange(editingLeadId, changes);
+  }catch(e){
+    alert('Could not save: '+e.message);
+    return;
+  }
   closeLeadModal();
   renderSalesPage();
 }
@@ -3719,7 +3730,7 @@ function renderCallsTable(){
 
   document.getElementById('callsTableBody').innerHTML=list.length
     ?list.map(c=>`<tr>
-      <td style="font-weight:500;${currentUser&&currentUser.role==='outreach'?'':'cursor:pointer'}" onclick="if(!(currentUser&&currentUser.role==='outreach'))openLeadModal('${c.id}')">${c.name}</td>
+      <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}</td>
       <td style="color:var(--pink);font-size:12px">${c.handle?'@'+c.handle:'—'}</td>
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.source||'—'}</td>
@@ -3729,7 +3740,7 @@ function renderCallsTable(){
       <td>${yn(c.id,'showed',c.showed||'no')}</td>
       <td>${yn(c.id,'signed',c.signed||'no')}</td>
       <td style="display:flex;gap:5px">
-        <button class="btn btn-ghost btn-sm admin-only" onclick="openLeadModal('${c.id}')">Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="openLeadModal('${c.id}')">Edit</button>
         <button class="btn btn-ghost btn-sm admin-only" onclick="event.stopPropagation();deleteCall('${c.id}')" style="color:var(--red);border-color:var(--red)">✕</button>
       </td>
     </tr>`).join('')
