@@ -84,7 +84,11 @@ export default async function handler(request) {
       // The Instagram handle is the identifier that matters — it's how the
       // outreach team finds and messages someone. Name is optional, so fall
       // back to the handle for display if it's left blank.
-      if (!lead || !lead.handle) return json({ ok: false, error: 'Instagram handle is required' }, 400);
+      // Either identifier is enough: Book a Call needs the handle to send DMs,
+      // but a lead logged from email or a referral may only have a name.
+      if (!lead || (!lead.handle && !lead.name)) {
+        return json({ ok: false, error: 'An Instagram handle or a name is required' }, 400);
+      }
       const rec = {
         id: Math.random().toString(36).slice(2, 9),
         date: new Date().toISOString().slice(0, 10),
@@ -93,6 +97,8 @@ export default async function handler(request) {
         signed: 'no',
         ...pick(lead),
         name: (lead.name && lead.name.trim()) ? lead.name.trim() : '@' + lead.handle,
+        booked: lead.booked || 'yes',
+        showed: lead.showed || 'no',
         bookedBy: identity.name,
         // Immutable record of when and by whom this was entered. `date` is
         // user-editable (it means the enquiry date), so it can't serve this.
