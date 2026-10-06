@@ -782,6 +782,7 @@ body{visibility:hidden}
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th>Name</th><th>Handle</th><th>Country</th><th>Source</th><th>Date</th>
+        <th>Added</th>
         <th>Call Booked</th><th>Showed Up</th><th>Signed Up</th><th></th>
       </tr></thead>
       <tbody id="callsTableBody"></tbody>
@@ -2858,6 +2859,8 @@ function logCall(){
     country:document.getElementById('sl_country').value,
     source:document.getElementById('sl_source').value,
     date:new Date().toISOString().slice(0,10),
+    addedAt:new Date().toISOString(),
+    addedBy:(currentUser&&currentUser.name)||'',
     booked:toggleState.booked,
     showed:toggleState.showed,
     signed:toggleState.signed,
@@ -3319,7 +3322,7 @@ function renderStartFollowUps(){
           </div>
           <div style="font-size:11px;color:var(--sub);margin-top:3px">
             <span style="color:${accent};font-weight:600">${when}</span>
-            · remind ${fmtShortDate(f.dueDate)}${f.startDate?` · starts ${fmtShortDate(f.startDate)}`:''}${f.addedBy?` · added by ${f.addedBy}`:''}
+            · remind ${fmtShortDate(f.dueDate)}${f.startDate?` · starts ${fmtShortDate(f.startDate)}`:''}${f.addedAt?` · set ${fmtShortDate(f.addedAt)}`:''}${f.addedBy?` by ${f.addedBy}`:''}
           </div>
           ${f.note?`<div style="font-size:11px;color:var(--sub);margin-top:5px;background:#111;border-radius:4px;padding:6px 9px">${f.note}</div>`:''}
         </div>
@@ -3330,6 +3333,20 @@ function renderStartFollowUps(){
         </div>
       </div>`;
   }).join('');
+}
+
+// "added 5 Oct by Luke" — when this record was manually entered, and by whom.
+// Older records predate the stamp, so fall back to the logged date and mark
+// it as approximate rather than implying a precision we don't have.
+function addedLabel(l){
+  if(!l) return '';
+  const who = l.addedBy || l.bookedBy || '';
+  if(l.addedAt){
+    const d = new Date(l.addedAt);
+    if(!isNaN(d)) return `added ${d.toLocaleDateString('en-AU',{day:'numeric',month:'short'})}${who?' by '+who:''}`;
+  }
+  if(l.date) return `logged ${fmtShortDate(l.date)}${who?' by '+who:''}`;
+  return who ? 'added by '+who : '';
 }
 
 function renderUpcomingCalls(){
@@ -3389,7 +3406,7 @@ function renderUpcomingCalls(){
               ${rescheduled?`<span title="Rescheduled ${rescheduled} time(s)" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}</span>`:''}
             </div>
             <div style="font-size:11px;color:var(--sub);margin-top:3px">
-              ${fmtCallWhen(l)} · <span style="color:${accent};font-weight:600">${fmtCountdown(h)}</span> · ${l.source||''}${l.bookedBy?' · booked by '+l.bookedBy:''}
+              ${fmtCallWhen(l)} · <span style="color:${accent};font-weight:600">${fmtCountdown(h)}</span> · ${l.source||''}${addedLabel(l)?' · '+addedLabel(l):''}
             </div>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${chips}</div>
@@ -3683,6 +3700,7 @@ function renderCallsTable(){
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.source||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.date||'—'}</td>
+      <td style="color:var(--sub);font-size:11px" title="${c.addedAt?'Entered '+new Date(c.addedAt).toLocaleString('en-AU'):'No entry stamp — predates this tracking'}">${c.addedAt?new Date(c.addedAt).toLocaleDateString('en-AU',{day:'numeric',month:'short'}):'—'}${(c.addedBy||c.bookedBy)?`<div style="font-size:10px;opacity:.75">${c.addedBy||c.bookedBy}</div>`:''}</td>
       <td>${yn(c.id,'booked',c.booked||'no')}</td>
       <td>${yn(c.id,'showed',c.showed||'no')}</td>
       <td>${yn(c.id,'signed',c.signed||'no')}</td>
