@@ -107,7 +107,14 @@ export default async function handler(request) {
     if (action === 'update') {
       const idx = data.calls.findIndex((c) => c.id === leadId);
       if (idx === -1) return json({ ok: false, error: 'Lead not found' }, 404);
-      data.calls[idx] = { ...data.calls[idx], ...pick(changes) };
+      data.calls[idx] = {
+        ...data.calls[idx],
+        ...pick(changes),
+        // Last-touched stamp so the dashboard can show when a record was
+        // changed — e.g. a call rescheduled today — not just created.
+        updatedAt: new Date().toISOString(),
+        updatedBy: identity.name,
+      };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
       return json({ ok: true, lead: data.calls[idx] });
     }
