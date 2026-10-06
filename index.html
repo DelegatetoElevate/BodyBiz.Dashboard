@@ -686,7 +686,7 @@ body{visibility:hidden}
                oninput="searchLeads()" style="max-width:520px">
         <div id="ll_searchResults" style="display:none;margin-top:10px;max-width:640px"></div>
       </div>
-      <div class="admin-only">
+      <div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:12px;align-items:end;flex-wrap:wrap">
         <div class="form-group">
           <div class="form-label">Name</div>
@@ -736,7 +736,7 @@ body{visibility:hidden}
             <button id="sl_showed_no" class="toggle-btn active-no" onclick="setToggle(&#39;showed&#39;,&#39;no&#39;)">NO</button>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="admin-only" style="display:flex;align-items:center;gap:8px">
           <div class="form-label">Signed Up</div>
           <div style="display:flex;gap:4px">
             <button id="sl_signed_yes" class="toggle-btn" onclick="setToggle(&#39;signed&#39;,&#39;yes&#39;)">YES</button>
@@ -2849,26 +2849,34 @@ function outcomeFromToggles(b,sh,si){
   return 'booked';
 }
 
-function logCall(){
+async function logCall(){
   const name=document.getElementById('sl_name').value.trim();
-  if(!name){alert('Name required');return;}
-  calls.unshift({
-    id:uid(),
+  const handle=normaliseHandle(document.getElementById('sl_handle').value);
+  if(!name && !handle){alert('Enter a name or an Instagram handle.');return;}
+  const lead={
     name,
-    handle:document.getElementById('sl_handle').value.trim().replace('@',''),
+    handle,
     country:document.getElementById('sl_country').value,
     source:document.getElementById('sl_source').value,
-    date:new Date().toISOString().slice(0,10),
-    addedAt:new Date().toISOString(),
-    addedBy:(currentUser&&currentUser.name)||'',
     booked:toggleState.booked,
     showed:toggleState.showed,
     signed:toggleState.signed,
-  });
-  saveCalls();
+  };
+  try{
+    // Goes through /api/leads rather than a whole-dataset save, so outreach
+    // can log leads too and one person's save can't overwrite another's.
+    const res=await fetch('/api/leads',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({action:'create', lead})});
+    const d=await res.json();
+    if(!d.ok) throw new Error(d.error||'could not save');
+    calls.unshift(d.lead);
+    localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
+  }catch(e){
+    alert('Could not save this lead: '+e.message);
+    return;
+  }
   document.getElementById('sl_name').value='';
   document.getElementById('sl_handle').value='';
-  // Reset toggles
   setToggle('booked','yes');setToggle('showed','no');setToggle('signed','no');
   renderSalesPage();
 }
