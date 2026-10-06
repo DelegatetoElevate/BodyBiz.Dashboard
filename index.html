@@ -550,8 +550,15 @@ body{visibility:hidden}
   <div class="two-col">
     <!-- Monthly calls trend -->
     <div class="card">
-      <div class="card-header"><div class="card-title">Calls Booked by Month</div><div class="card-meta">Last 6 months</div></div>
-      <div class="card-body"><div class="rev-bar-wrap" id="callsMonthBars"></div></div>
+      <div class="card-header">
+        <div class="card-title">Calls Booked by Month</div>
+        <select id="cbm_range" onchange="renderCallsByMonth()" class="form-input" style="width:140px;font-size:12px;padding:5px 9px">
+          <option value="6">Last 6 months</option>
+          <option value="12">Last 12 months</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+      <div class="card-body"><div id="callsMonthTable"></div></div>
     </div>
     <!-- Conversion by source -->
     <div class="card">
@@ -3561,23 +3568,96 @@ function renderSalesPage(){
     </div>`;
   }).join('');
 
-  // Calls by month
-  const months=getMonthsBack(6);
-  const callsData=months.map(m=>calls.filter(c=>{
-    if(!c.date)return false;
-    const d=new Date(c.date);return d.getMonth()===m.getMonth()&&d.getFullYear()===m.getFullYear();
-  }));
-  const maxCalls=Math.max(...callsData.map(d=>d.length),1);
-  document.getElementById('callsMonthBars').innerHTML=months.map((m,i)=>{
-    const sig=callsData[i].filter(c=>c.signed==='yes').length;
-    return `<div class="rev-bar-row">
-      <div class="rev-bar-label" style="width:32px">${m.toLocaleString('en',{month:'short'})}</div>
-      <div class="rev-bar-track"><div class="rev-bar-fill" style="width:${Math.round(callsData[i].length/maxCalls*100)}%;background:var(--yellow)"></div></div>
-      <div class="rev-bar-val" style="color:var(--yellow)">${callsData[i].length} <span style="color:var(--green);font-size:11px">${sig>0?'('+sig+' ✓)':''}</span></div>
-    </div>`;
-  }).join('');
+  renderCallsByMonth();
 
   renderCallsTable();
+}
+
+
+// ============================================================
+// CALLS BOOKED BY MONTH
+// Month-by-month breakdown of what happened to each booked call.
+// Grouped by the date the lead was logged, matching the rest of the
+// Sales funnel figures.
+// ============================================================
+function renderCallsByMonth(){
+  const box = document.getElementById('callsMonthTable');
+  if(!box) return;
+  const range = document.getElementById('cbm_range')?.value || '6';
+
+  // Build the list of months to show
+  const dated = calls.filter(c => c.date);
+  let months = [];
+  if(range === 'all'){
+    const keys = [...new Set(dated.map(c => c.date.slice(0,7)))].sort().reverse();
+    months = keys.map(k => new Date(k + '-01T00:00:00'));
+  } else {
+    const n = parseInt(range,10);
+    const now = new Date();
+    for(let i=0;i<n;i++){ months.push(new Date(now.getFullYear(), now.getMonth()-i, 1)); }
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rows = months.map(m => {
+    const key = m.getFullYear() + '-' + String(m.getMonth()+1).padStart(2,'0');
+    const inMonth = dated.filter(c => c.date.slice(0,7) === key);
+    const booked = inMonth.filter(c => c.booked === 'yes');
+    const showed = booked.filter(c => c.showed === 'yes');
+    const signed = booked.filter(c => c.signed === 'yes');
+    const rescheduled = booked.filter(c => (c.rescheduleHistory||[]).length > 0);
+    // A call still in the future hasn't been missed — only count a no-show
+    // once the scheduled time has passed (or where no date was ever set).
+    const noShow = booked.filter(c => {
+      if(c.showed === 'yes') return false;
+      if(c.callDate){ const d = new Date(c.callDate); d.setHours(0,0,0,0); return d <= today; }
+      return true;
+    });
+    const upcoming = booked.length - showed.length - noShow.length;
+    return { m, key, booked:booked.length, showed:showed.length, noShow:noShow.length,
+             rescheduled:rescheduled.length, signed:signed.length, upcoming };
+  });
+
+  const tot = rows.reduce((a,r)=>({
+    booked:a.booked+r.booked, showed:a.showed+r.showed, noShow:a.noShow+r.noShow,
+    rescheduled:a.rescheduled+r.rescheduled, signed:a.signed+r.signed, upcoming:a.upcoming+r.upcoming
+  }), {booked:0,showed:0,noShow:0,rescheduled:0,signed:0,upcoming:0});
+
+  const th = (t,extra='') => `<th style="text-align:right;padding:7px 10px;${extra}">${t}</th>`;
+  const td = (v,colour='') => `<td style="text-align:right;padding:7px 10px;${colour?'color:'+colour+';':''}font-weight:600">${v}</td>`;
+
+  box.innerHTML = `
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
+      <thead>
+        <tr style="color:var(--sub);font-size:10px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:7px 10px">Month</th>
+          ${th('Booked')}${th('Showed')}${th('No show')}${th('Rescheduled')}${th('Sign ups')}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r=>`
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04)">
+            <td style="padding:7px 10px;font-weight:500">${r.m.toLocaleString('en',{month:'short', year:'numeric'})}</td>
+            ${td(r.booked,'var(--yellow)')}
+            ${td(r.showed,'var(--green)')}
+            ${td(r.noShow || '—', r.noShow?'var(--red)':'var(--sub)')}
+            ${td(r.rescheduled || '—', r.rescheduled?'var(--yellow)':'var(--sub)')}
+            ${td(r.signed || '—', r.signed?'var(--pink)':'var(--sub)')}
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="border-top:1px solid var(--border);color:var(--sub)">
+          <td style="padding:8px 10px;font-weight:700">Total</td>
+          ${td(tot.booked,'var(--yellow)')}
+          ${td(tot.showed,'var(--green)')}
+          ${td(tot.noShow,'var(--red)')}
+          ${td(tot.rescheduled,'var(--yellow)')}
+          ${td(tot.signed,'var(--pink)')}
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+    ${tot.upcoming>0?`<div style="font-size:10px;color:var(--sub);margin-top:8px">${tot.upcoming} booked call${tot.upcoming===1?'':'s'} still upcoming — not counted as showed or no-show yet.</div>`:''}`;
 }
 
 function renderCallsTable(){
