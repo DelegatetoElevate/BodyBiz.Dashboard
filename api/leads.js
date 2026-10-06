@@ -94,6 +94,10 @@ export default async function handler(request) {
         ...pick(lead),
         name: (lead.name && lead.name.trim()) ? lead.name.trim() : '@' + lead.handle,
         bookedBy: identity.name,
+        // Immutable record of when and by whom this was entered. `date` is
+        // user-editable (it means the enquiry date), so it can't serve this.
+        addedAt: new Date().toISOString(),
+        addedBy: identity.name,
       };
       data.calls.unshift(rec);
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
