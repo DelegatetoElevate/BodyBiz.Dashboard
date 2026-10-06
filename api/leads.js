@@ -84,10 +84,11 @@ export default async function handler(request) {
       // The Instagram handle is the identifier that matters — it's how the
       // outreach team finds and messages someone. Name is optional, so fall
       // back to the handle for display if it's left blank.
-      // Either identifier is enough: Book a Call needs the handle to send DMs,
-      // but a lead logged from email or a referral may only have a name.
-      if (!lead || (!lead.handle && !lead.name)) {
-        return json({ ok: false, error: 'An Instagram handle or a name is required' }, 400);
+      // The handle is the one identifier that always exists for an Instagram
+      // lead, and it's how anyone finds or messages them. The name can be
+      // filled in later by editing the lead.
+      if (!lead || !lead.handle) {
+        return json({ ok: false, error: 'Instagram handle is required' }, 400);
       }
       const rec = {
         id: Math.random().toString(36).slice(2, 9),
