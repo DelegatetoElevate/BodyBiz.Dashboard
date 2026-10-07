@@ -173,6 +173,7 @@ export default async function handler(req, res) {
       const LEAD_SCHEDULING_FIELDS = [
         'callDate', 'callTime', 'reminders', 'rescheduleHistory', 'followUp', 'bookedBy',
         'addedAt', 'addedBy', 'updatedAt', 'updatedBy',
+        'calendlyUri', 'calendlyEvent', 'needsHandle',
       ];
       try {
         const currentRaw = await kvCommand(['GET', KEY]);
