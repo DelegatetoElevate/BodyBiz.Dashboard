@@ -73,6 +73,18 @@ export default async function handler(request) {
   const listSubs = async () =>
     cal(`/webhook_subscriptions?organization=${encodeURIComponent(org)}&scope=organization&count=50`, token);
 
+  if (action === 'log') {
+    const cur = await (async () => {
+      const url2 = process.env.KV_REST_API_URL, tok = process.env.KV_REST_API_TOKEN;
+      const r = await fetch(url2, { method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify(['GET', 'bb_calendly_log']) });
+      return r.ok ? r.json() : null;
+    })();
+    const list = cur && cur.result ? JSON.parse(cur.result) : [];
+    return json({ ok: true, attempts: list });
+  }
+
   if (action === 'status') {
     const subs = await listSubs();
     const ours = (subs.body.collection || []).filter((s) => s.callback_url === callbackUrl);
