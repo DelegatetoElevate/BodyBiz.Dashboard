@@ -577,6 +577,7 @@ body{visibility:hidden}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="calendlyStatus()">Check connection</button>
         <button class="btn btn-pink" style="font-size:12px;padding:6px 12px" onclick="calendlyRegister()">Connect Calendly</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="calendlyLog()">Recent activity</button>
         <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px;border-color:var(--red);color:var(--red)" onclick="calendlyUnregister()">Disconnect</button>
       </div>
       <div id="calStatus" style="font-size:12px;margin-top:12px;color:var(--sub)"></div>
@@ -3408,6 +3409,31 @@ async function calendlyCall(action){
     box.textContent = 'Could not reach the server: '+e.message;
     return null;
   }
+}
+
+
+// Shows what Calendly has actually sent and what happened to it — the only
+// way to tell a rejected webhook from one that never arrived.
+async function calendlyLog(){
+  const r = await calendlyCall('log'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){ box.style.color='var(--red)'; box.textContent = '✗ '+d.error; return; }
+  if(!d.attempts.length){
+    box.style.color='var(--yellow)';
+    box.innerHTML = 'No webhooks received yet.<br><span style="opacity:.75">If you have made a test booking, Calendly either has not sent it or could not reach this endpoint.</span>';
+    return;
+  }
+  box.style.color='var(--sub)';
+  box.innerHTML = d.attempts.map(a=>{
+    const bad = /REJECT|ERROR/i.test(a.result||'');
+    return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <span style="color:${bad?'var(--red)':'var(--green)'}">${a.result}</span>
+      ${a.invitee?` · ${a.invitee}`:''}${a.callDate?` · ${a.callDate} ${a.callTime||''}`:''}
+      <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}</span>
+      ${a.error?`<div style="opacity:.7;font-size:11px">${a.error}</div>`:''}
+      ${a.hasHeader===false?`<div style="color:var(--yellow);font-size:11px">Calendly sent no signature header — the signing secret may not have been registered with the webhook.</div>`:''}
+    </div>`;
+  }).join('');
 }
 
 async function calendlyStatus(){
