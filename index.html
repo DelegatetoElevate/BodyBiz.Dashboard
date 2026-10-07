@@ -567,6 +567,22 @@ body{visibility:hidden}
     </div>
   </div>
 
+  <!-- Calendly connection (admin only) -->
+  <div class="card admin-only" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">Calendly Connection</div>
+      <div class="card-meta" id="calStatusMeta">Bookings made through the Calendly link appear here automatically</div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="calendlyStatus()">Check connection</button>
+        <button class="btn btn-pink" style="font-size:12px;padding:6px 12px" onclick="calendlyRegister()">Connect Calendly</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px;border-color:var(--red);color:var(--red)" onclick="calendlyUnregister()">Disconnect</button>
+      </div>
+      <div id="calStatus" style="font-size:12px;margin-top:12px;color:var(--sub)"></div>
+    </div>
+  </div>
+
   <!-- Book a call + upcoming schedule -->
   <div class="card" style="margin-bottom:18px">
     <div class="card-header">
@@ -3373,6 +3389,83 @@ function addedLabel(l){
   return who ? 'added by '+who : '';
 }
 
+
+// ============================================================
+// CALENDLY CONNECTION (admin only)
+// One-time setup: the server registers the webhook with Calendly using the
+// token held in the Vercel environment, so no API calls are run by hand.
+// ============================================================
+async function calendlyCall(action){
+  const box = document.getElementById('calStatus');
+  box.style.color = 'var(--sub)';
+  box.textContent = 'Checking…';
+  try{
+    const res = await fetch('/api/calendly-setup?action='+action);
+    const d = await res.json();
+    return {d, box};
+  }catch(e){
+    box.style.color = 'var(--red)';
+    box.textContent = 'Could not reach the server: '+e.message;
+    return null;
+  }
+}
+
+async function calendlyStatus(){
+  const r = await calendlyCall('status'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){
+    box.style.color = 'var(--red)';
+    box.innerHTML = `✗ ${d.error}` + (d.detail?`<div style="margin-top:4px;opacity:.7">${JSON.stringify(d.detail).slice(0,300)}</div>`:'');
+    return;
+  }
+  box.style.color = 'var(--sub)';
+  box.innerHTML = `
+    <div>Account: <strong style="color:var(--white)">${d.account.name}</strong> · ${d.account.email}</div>
+    <div style="margin-top:4px">Webhook: <strong style="color:${d.registered?'var(--green)':'var(--yellow)'}">${d.registered?'connected':'not connected'}</strong></div>
+    <div style="margin-top:4px;opacity:.75">Receiving at ${d.callbackUrl}</div>
+    ${!d.secretConfigured?`<div style="margin-top:6px;color:var(--yellow)">No signing secret set — add CALENDLY_WEBHOOK_SECRET in Vercel so incoming bookings can be verified.</div>`:''}`;
+}
+
+async function calendlyRegister(){
+  if(!confirm('Connect Calendly?\n\nBookings made through the Calendly link will start appearing in Upcoming Calls automatically.')) return;
+  const r = await calendlyCall('register'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){
+    box.style.color = 'var(--red)';
+    box.innerHTML = `✗ ${d.error}` + (d.detail?`<div style="margin-top:4px;opacity:.7">${JSON.stringify(d.detail).slice(0,300)}</div>`:'');
+    return;
+  }
+  box.style.color = 'var(--green)';
+  box.textContent = d.already ? '✓ Already connected — nothing to do.' : '✓ Connected. Book a test slot in Calendly and it should appear in Upcoming Calls within a few seconds.';
+}
+
+async function calendlyUnregister(){
+  if(!confirm('Disconnect Calendly?\n\nNew bookings will stop flowing into the dashboard. Existing leads are unaffected.')) return;
+  const r = await calendlyCall('unregister'); if(!r) return;
+  const {d, box} = r;
+  box.style.color = d.ok ? 'var(--yellow)' : 'var(--red)';
+  box.textContent = d.ok ? `Disconnected (${(d.removed||[]).length} webhook removed).` : ('✗ '+d.error);
+}
+
+
+// Calendly bookings arrive without an Instagram handle (the booking form
+// doesn't ask for one), so give whoever recognises the person a one-click
+// way to attach it.
+async function promptHandle(leadId){
+  const l = calls.find(c=>c.id===leadId);
+  if(!l) return;
+  const v = prompt(`Instagram handle for ${l.name}${l.email?' ('+l.email+')':''}:`, '');
+  if(v === null) return;
+  const h = normaliseHandle(v);
+  if(!h){ alert('No handle entered.'); return; }
+  const dupe = calls.find(c => c.id!==leadId && normaliseHandle(c.handle||'')===h);
+  if(dupe && !confirm(`@${h} is already on ${dupe.name}. Use it here as well?`)) return;
+  try{
+    await saveLeadChange(leadId, {handle:h, needsHandle:false});
+    renderSalesPage();
+  }catch(e){ alert('Could not save: '+e.message); }
+}
+
 function renderUpcomingCalls(){
   const box = document.getElementById('upcomingCalls');
   if(!box) return;
@@ -3426,6 +3519,8 @@ function renderUpcomingCalls(){
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span style="font-weight:600">${l.name}</span>
               ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+              ${(!ig && l.source==='Calendly')?`<button onclick="promptHandle('${l.id}')" title="Booked via Calendly, which doesn't collect the Instagram handle — click to add it" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">+ ADD HANDLE</button>`:''}
+              ${l.source==='Calendly'?`<span title="Came in through the Calendly link" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(92,154,255,0.12);color:#5c9aff;border:1px solid rgba(92,154,255,0.3)">CALENDLY</span>`:''}
               ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
               ${rescheduled?(()=>{const last=(l.rescheduleHistory||[])[rescheduled-1]||{};return `<span title="Rescheduled ${rescheduled} time(s)${last.from?' — previously '+last.from:''}${last.by?' by '+last.by:''}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}${last.at?' '+fmtRelDate(last.at):''}</span>`;})():''}
             </div>
