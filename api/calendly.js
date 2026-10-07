@@ -76,9 +76,14 @@ const normName = (n) =>
 // booking will match perfectly instead of falling back to the name.
 function handleFromAnswers(payload) {
   const qa = payload.questions_and_answers || [];
-  const hit = qa.find((q) => /instagram|ig handle|@/i.test(q.question || ''));
+  // Must actually be an Instagram question. A bare "@" used to match here,
+  // which meant an email question could be captured as the handle — wrong
+  // data is worse than none, since nobody would know to correct it.
+  const hit = qa.find((q) => /instagram|\big\b|insta\b/i.test(q.question || ''));
   if (!hit || !hit.answer) return '';
-  return String(hit.answer).trim()
+  const ans = String(hit.answer).trim();
+  if (ans.includes('@') && /\.[a-z]{2,}$/i.test(ans)) return '';   // that's an email
+  return ans
     .replace(/^https?:\/\//i, '')
     .replace(/^(www\.)?instagram\.com\//i, '')
     .split(/[/?#]/)[0]
