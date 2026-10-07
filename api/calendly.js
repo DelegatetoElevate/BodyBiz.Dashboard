@@ -1,6 +1,7 @@
 export const config = { runtime: 'edge' };
 
 const KEY = 'bb_app_data';
+const LOG_KEY = 'bb_calendly_log';
 
 // ============================================================
 // CALENDLY WEBHOOK
@@ -24,6 +25,18 @@ async function kvCommand(cmd) {
   });
   if (!res.ok) throw new Error('KV request failed: ' + res.status);
   return res.json();
+}
+
+// Keep a short trail of what Calendly actually sent and what we did with it.
+// Without this a rejected webhook is invisible — Calendly reports a failure
+// on its side, but nobody here can see why.
+async function logAttempt(entry) {
+  try {
+    const cur = await kvCommand(['GET', LOG_KEY]);
+    const list = cur && cur.result ? JSON.parse(cur.result) : [];
+    list.unshift({ at: new Date().toISOString(), ...entry });
+    await kvCommand(['SET', LOG_KEY, JSON.stringify(list.slice(0, 20))]);
+  } catch (e) { /* logging must never break the webhook */ }
 }
 
 const json = (b, s = 200) =>
@@ -82,7 +95,14 @@ export default async function handler(request) {
     request.headers.get('calendly-webhook-signature'),
     process.env.CALENDLY_WEBHOOK_SECRET
   );
-  if (!okSig) return json({ ok: false, error: 'Invalid signature' }, 401);
+  if (!okSig) {
+    await logAttempt({
+      result: 'REJECTED — signature did not verify',
+      hasHeader: !!request.headers.get('calendly-webhook-signature'),
+      secretConfigured: !!process.env.CALENDLY_WEBHOOK_SECRET,
+    });
+    return json({ ok: false, error: 'Invalid signature' }, 401);
+  }
 
   let body;
   try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'Bad JSON' }, 400); }
@@ -135,6 +155,7 @@ export default async function handler(request) {
         updatedAt: new Date().toISOString(), updatedBy: 'Calendly',
       };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
+      await logAttempt({ event, invitee: inviteeName, result: 'cancelled', lead: data.calls[idx].name });
       return json({ ok: true, action: 'cancelled', lead: data.calls[idx].name });
     }
 
@@ -162,6 +183,7 @@ export default async function handler(request) {
         needsHandle: !(lead.handle || handle),
       };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
+      await logAttempt({ event, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, callDate: booking.callDate, callTime: booking.callTime });
       return json({ ok: true, action: 'matched existing lead', lead: data.calls[idx].name });
     }
 
@@ -184,8 +206,10 @@ export default async function handler(request) {
     };
     data.calls.unshift(rec);
     await kvCommand(['SET', KEY, JSON.stringify(data)]);
+    await logAttempt({ event, invitee: inviteeName, result: 'created new lead', lead: rec.name, callDate: rec.callDate, callTime: rec.callTime });
     return json({ ok: true, action: 'created new lead', lead: rec.name });
   } catch (e) {
+    await logAttempt({ event, invitee: inviteeName, result: 'ERROR', error: String(e) });
     return json({ ok: false, error: String(e) }, 500);
   }
 }
