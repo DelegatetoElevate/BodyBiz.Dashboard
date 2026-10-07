@@ -3480,10 +3480,16 @@ async function calendlyUnregister(){
 async function promptHandle(leadId){
   const l = calls.find(c=>c.id===leadId);
   if(!l) return;
-  const v = prompt(`Instagram handle for ${l.name}${l.email?' ('+l.email+')':''}:`, '');
+  const current = normaliseHandle(l.handle||'');
+  const v = prompt(`Instagram handle for ${l.name}${l.email?' ('+l.email+')':''}:`+(current?'':'\n\nCalendly bookings don\'t include one, so add it here.'), current);
   if(v === null) return;
   const h = normaliseHandle(v);
-  if(!h){ alert('No handle entered.'); return; }
+  if(!h){
+    if(!current || !confirm(`Remove the handle @${current} from ${l.name}?`)) return;
+    try{ await saveLeadChange(leadId,{handle:'', needsHandle:true}); renderSalesPage(); }
+    catch(e){ alert('Could not save: '+e.message); }
+    return;
+  }
   const dupe = calls.find(c => c.id!==leadId && normaliseHandle(c.handle||'')===h);
   if(dupe && !confirm(`@${h} is already on ${dupe.name}. Use it here as well?`)) return;
   try{
@@ -3544,8 +3550,9 @@ function renderUpcomingCalls(){
           <div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span style="font-weight:600">${l.name}</span>
-              ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
-              ${(!ig && l.source==='Calendly')?`<button onclick="promptHandle('${l.id}')" title="Booked via Calendly, which doesn't collect the Instagram handle — click to add it" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">+ ADD HANDLE</button>`:''}
+              ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>
+              <button onclick="promptHandle('${l.id}')" title="Edit the Instagram handle" style="background:none;border:none;color:var(--sub);cursor:pointer;font-size:11px;padding:0 2px">✎</button>`:''}
+              ${!ig?`<button onclick="promptHandle('${l.id}')" title="No Instagram handle yet — Calendly bookings don't collect one. Click to add it." style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">+ ADD HANDLE</button>`:''}
               ${l.source==='Calendly'?`<span title="Came in through the Calendly link" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(92,154,255,0.12);color:#5c9aff;border:1px solid rgba(92,154,255,0.3)">CALENDLY</span>`:''}
               ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
               ${rescheduled?(()=>{const last=(l.rescheduleHistory||[])[rescheduled-1]||{};return `<span title="Rescheduled ${rescheduled} time(s)${last.from?' — previously '+last.from:''}${last.by?' by '+last.by:''}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}${last.at?' '+fmtRelDate(last.at):''}</span>`;})():''}
