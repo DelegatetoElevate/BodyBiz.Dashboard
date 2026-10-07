@@ -6,7 +6,11 @@
 
 export const config = {
   matcher: [
-    '/((?!login.html|api/login|api/logout|favicon.ico|_vercel).*)',
+    // api/calendly is excluded because Calendly posts here with no login
+    // cookie — the gate would bounce it to the login page and the booking
+    // would be lost. That endpoint protects itself instead, by verifying
+    // the signature Calendly signs each request with.
+    '/((?!login.html|api/login|api/logout|api/calendly$|favicon.ico|_vercel).*)',
   ],
 };
 
