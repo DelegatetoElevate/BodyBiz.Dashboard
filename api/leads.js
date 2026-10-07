@@ -9,6 +9,7 @@ const OUTREACH_FIELDS = [
   'callDate', 'callTime', 'booked', 'showed',
   'reminders', 'rescheduleHistory', 'bookedBy', 'notes',
   'followUp',   // start-date reminder: { startDate, dueDate, note, sent, sentAt, by }
+  'needsHandle',// cleared once someone attaches the handle to a Calendly booking
 ];
 const ADMIN_FIELDS = [...OUTREACH_FIELDS, 'signed', 'date'];
 
