@@ -2996,8 +2996,42 @@ function findExistingLeads({handle, email, name}){
 // which would be hidden the moment the server saw it — a record that
 // vanishes on save is worse than one that's explained.
 // ============================================================
+// Two cases, two flags (set in api/data.js):
+//   _hideFromSales — a lead record created by a client's booking. Not sales
+//     activity at all, so it leaves every Sales view.
+//   _hideFromCalls — the client's ORIGINAL lead record, the one that
+//     converted. A check-in booking gets written onto it, because the webhook
+//     matches incoming bookings to existing leads by name. Removing it
+//     entirely would delete a real conversion from the funnel, so it stays in
+//     All Leads and the counters and only drops out of the call reminders.
 function isClientLead(l){ return !!(l && l._hideFromSales); }
+function isActiveClientLead(l){ return !!(l && (l._hideFromSales || l._hideFromCalls)); }
 function salesLeads(){ return calls.filter(l=>!isClientLead(l)); }
+// Upcoming Calls and Start Date Follow-Ups: no current client's check-in.
+function callReminderLeads(){ return salesLeads().filter(l=>!l._hideFromCalls); }
+
+// ============================================================
+// WHICH CALENDLY EVENT A BOOKING CAME FROM
+// The webhook stores the event type's display name on the lead as
+// calendlyEvent. Showing it is a fail-safe, not a filter: the active-client
+// check still decides what's hidden. This just makes it possible to see at a
+// glance why a record is in the list, instead of having to dig.
+//
+// An unrecognised event name is shown as-is rather than swallowed — a new
+// event type in Calendly should be visible, not silently untagged.
+// ============================================================
+const CALENDLY_EVENT_TAGS = [
+  { match: /first[\s-]*time|consultation|consultaion/i, label: 'Consultation',  color: '#00e5a0' },
+  { match: /check[\s-]*in/i,                            label: 'Check-In Call', color: '#8a8a9a' },
+];
+function calendlyEventTag(l){
+  const name = (l && l.calendlyEvent) || '';
+  if(!name) return '';
+  const hit = CALENDLY_EVENT_TAGS.find(t=>t.match.test(name));
+  const label = hit ? hit.label : name;
+  const color = hit ? hit.color : '#8a8a9a';
+  return `<span title="Calendly event type: ${name}" style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;background:${color}1f;color:${color};border:1px solid ${color}55;white-space:nowrap">${label}</span>`;
+}
 // Plain-English summary of where a lead got to.
 function leadOutcomeText(l){
   if(l.signed==='yes') return 'signed up — became a client';
@@ -3031,7 +3065,7 @@ async function bookCall(){
     // Already an active client — their check-in bookings are deliberately
     // kept out of Sales, so offering to schedule onto that record would
     // produce a call nobody can see afterwards.
-    if(isClientLead(l)){
+    if(isActiveClientLead(l)){
       msg.style.display='block';
       msg.style.color='#5c9aff';
       msg.innerHTML = `
@@ -3204,7 +3238,7 @@ function searchLeads(){
         onmouseout="this.style.borderColor='';this.style.background='var(--surface)'">
         <div>
           <strong>${l.name}</strong>${ig?` <span style="color:var(--pink)">@${ig}</span>`:''}${l.email?` <span style="color:var(--sub)">${l.email}</span>`:''}
-          <div style="color:var(--sub);font-size:11px;margin-top:2px">Logged ${l.date||'—'} · ${leadOutcomeText(l)} · ${l.source||''}${hasCall?' · <span style="color:var(--yellow)">call scheduled '+fmtCallWhen(l)+'</span>':''}</div>
+          <div style="color:var(--sub);font-size:11px;margin-top:2px">Logged ${l.date||'—'} · ${leadOutcomeText(l)} · ${l.source||''}${hasCall?' · <span style="color:var(--yellow)">call scheduled '+fmtCallWhen(l)+'</span>':''}${l.calendlyEvent?' '+calendlyEventTag(l):''}</div>
         </div>
         <span style="font-size:10px;color:var(--sub);white-space:nowrap">matched on ${m.how} →</span>
       </div>`;
@@ -3342,7 +3376,7 @@ function renderStartFollowUps(){
   if(!box) return;
   const today = new Date(); today.setHours(0,0,0,0);
   // Keep sent ones visible for a week so there's a record of what went out.
-  const list = salesLeads().filter(l=>{
+  const list = callReminderLeads().filter(l=>{
     const f = l.followUp;
     if(!f || !f.dueDate) return false;
     if(!f.sent) return true;
@@ -3466,6 +3500,7 @@ async function calendlyLog(){
     return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
       <span style="color:${bad?'var(--red)':'var(--green)'}">${a.result}</span>
       ${a.invitee?` · ${a.invitee}`:''}${a.callDate?` · ${a.callDate} ${a.callTime||''}`:''}
+      ${a.eventType?' '+calendlyEventTag({calendlyEvent:a.eventType}):''}
       <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}</span>
       ${a.error?`<div style="opacity:.7;font-size:11px">${a.error}</div>`:''}
       ${a.hasHeader===false?`<div style="color:var(--yellow);font-size:11px">Calendly sent no signature header — the signing secret may not have been registered with the webhook.</div>`:''}
@@ -3542,7 +3577,7 @@ function renderUpcomingCalls(){
   // so no-shows can still be rescheduled. Leads who already signed are
   // included too — a re-engagement call still needs its reminders sent.
   const now = new Date();
-  const list = salesLeads().filter(l=>{
+  const list = callReminderLeads().filter(l=>{
     if(!l.callDate) return false;
     const h = hoursUntilCall(l);
     return h !== null && h > -168;
@@ -3591,6 +3626,7 @@ function renderUpcomingCalls(){
               <button onclick="promptHandle('${l.id}')" title="Edit the Instagram handle" style="background:none;border:none;color:var(--sub);cursor:pointer;font-size:11px;padding:0 2px">✎</button>`:''}
               ${!ig?`<button onclick="promptHandle('${l.id}')" title="No Instagram handle yet — Calendly bookings don't collect one. Click to add it." style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">+ ADD HANDLE</button>`:''}
               ${l.source==='Calendly'?`<span title="Came in through the Calendly link" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(92,154,255,0.12);color:#5c9aff;border:1px solid rgba(92,154,255,0.3)">CALENDLY</span>`:''}
+              ${calendlyEventTag(l)}
               ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
               ${rescheduled?(()=>{const last=(l.rescheduleHistory||[])[rescheduled-1]||{};return `<span title="Rescheduled ${rescheduled} time(s)${last.from?' — previously '+last.from:''}${last.by?' by '+last.by:''}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}${last.at?' '+fmtRelDate(last.at):''}</span>`;})():''}
             </div>
@@ -3902,7 +3938,7 @@ function renderCallsTable(){
       <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}</td>
       <td style="color:var(--pink);font-size:12px">${c.handle?'@'+c.handle:'—'}</td>
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
-      <td style="color:var(--sub);font-size:12px">${c.source||'—'}</td>
+      <td style="color:var(--sub);font-size:12px">${c.source||'—'}${c.calendlyEvent?`<div style="margin-top:3px">${calendlyEventTag(c)}</div>`:''}</td>
       <td style="color:var(--sub);font-size:12px">${c.date||'—'}</td>
       <td style="color:var(--sub);font-size:11px" title="${c.addedAt?'Entered '+new Date(c.addedAt).toLocaleString('en-AU'):'No entry stamp — predates this tracking'}">${c.addedAt?fmtRelDate(c.addedAt):'—'}${(c.addedBy||c.bookedBy)?`<div style="font-size:10px;opacity:.75">${c.addedBy||c.bookedBy}</div>`:''}</td>
       <td>${yn(c.id,'booked',c.booked||'no')}</td>
