@@ -103,6 +103,63 @@ async function mirrorLeadsToSheet(calls) {
   await writeSheetTab(tab, header, rows);
 }
 
+// ============================================================
+// EXISTING CLIENTS WHO BOOK A CALL
+// Current clients book their check-in calls through the same Calendly link
+// prospects use, so the webhook has no way to tell them apart and creates a
+// lead for them. They then sit in the Sales tab's call reminders next to real
+// prospects. Flagged here so every Sales view can skip them.
+//
+// This has to happen server-side: outreach accounts receive no client list at
+// all, so their browser could never work out who is already a client.
+//
+// A lead marked signed is deliberately NOT flagged. Signing up is exactly
+// what turns a lead into a client, so flagging them would erase every
+// conversion from the funnel and the close rate.
+//
+// Nothing is deleted and the flag is never stored — it's recomputed on every
+// read, so a client who churns reappears as a lead on their next booking.
+// ============================================================
+const normLeadName = (n) =>
+  String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+const normLeadHandle = (h) =>
+  String(h || '').trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/^(www\.)?instagram\.com\//i, '')
+    .split(/[/?#]/)[0]
+    .replace(/^@+/, '')
+    .toLowerCase();
+
+function withoutFlag(lead) {
+  if (lead._hideFromSales === undefined) return lead;
+  const clean = { ...lead };
+  delete clean._hideFromSales;
+  return clean;
+}
+
+function flagActiveClientLeads(data) {
+  const clients = Array.isArray(data.clients) ? data.clients : [];
+  const calls = Array.isArray(data.calls) ? data.calls : [];
+
+  const activeNames = new Set();
+  const activeHandles = new Set();
+  clients.forEach((c) => {
+    if (String(c.status || '').toLowerCase() !== 'active') return;
+    const n = normLeadName(c.name);
+    if (n) activeNames.add(n);
+    const h = normLeadHandle(c.instagram);
+    if (h) activeHandles.add(h);
+  });
+
+  return calls.map((lead) => {
+    if (lead.signed === 'yes') return withoutFlag(lead);
+    const n = normLeadName(lead.name);
+    const h = normLeadHandle(lead.handle);
+    const isActiveClient = (n && activeNames.has(n)) || (h && activeHandles.has(h));
+    return isActiveClient ? { ...lead, _hideFromSales: true } : withoutFlag(lead);
+  });
+}
+
 export default async function handler(req, res) {
   const identity = getIdentity(req);
   if (!identity) {
@@ -115,13 +172,13 @@ export default async function handler(req, res) {
       const data = result && result.result ? JSON.parse(result.result) : { clients: [], calls: [] };
 
       if (identity.role === 'admin') {
-        return res.status(200).json(data);
+        return res.status(200).json({ ...data, calls: flagActiveClientLeads(data) });
       }
       // Outreach: Sales tab only. They get the leads list (needed to book calls
       // and catch duplicates) and nothing else — no client records, revenue,
       // pulse statuses or touch logs ever reach their browser.
       if (identity.role === 'outreach') {
-        return res.status(200).json({ clients: [], calls: data.calls || [], touchLogs: [] });
+        return res.status(200).json({ clients: [], calls: flagActiveClientLeads(data), touchLogs: [] });
       }
       // Coach role: only ever see their own clients, and no lead/call data
       // (that's outside "Client Pulse" scope). Filtered here, server-side,
@@ -163,6 +220,14 @@ export default async function handler(req, res) {
     }
     try {
       const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+      // _hideFromSales is derived on read, never stored. The browser receives
+      // it and sends the whole dataset back, so strip it here or a stale flag
+      // gets baked into the database and outlives the client status that
+      // caused it.
+      if (Array.isArray(payload.calls)) {
+        payload.calls = payload.calls.map(withoutFlag);
+      }
 
       // Scheduling fields are owned by /api/leads, which outreach writes to
       // one lead at a time. This endpoint receives a whole dataset from one
