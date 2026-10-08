@@ -3496,9 +3496,16 @@ async function calendlyLog(){
   }
   box.style.color='var(--sub)';
   box.innerHTML = d.attempts.map(a=>{
-    const bad = /REJECT|ERROR/i.test(a.result||'');
+    // A booking left alone on purpose isn't a success or a failure, so it
+    // reads grey rather than green — green everywhere would hide the real
+    // confirmations among the ignored check-ins.
+    const res = a.result || '';
+    const bad = /REJECT|ERROR/i.test(res);
+    const warn = /WARNING/i.test(res);
+    const skipped = /^ignored/i.test(res);
+    const col = bad ? 'var(--red)' : warn ? 'var(--yellow)' : skipped ? 'var(--sub)' : 'var(--green)';
     return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-      <span style="color:${bad?'var(--red)':'var(--green)'}">${a.result}</span>
+      <span style="color:${col}">${a.result}</span>
       ${a.invitee?` · ${a.invitee}`:''}${a.callDate?` · ${a.callDate} ${a.callTime||''}`:''}
       ${a.eventType?' '+calendlyEventTag({calendlyEvent:a.eventType}):''}
       <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}</span>
