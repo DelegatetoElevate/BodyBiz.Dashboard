@@ -12,7 +12,29 @@ const LOG_KEY = 'bb_calendly_log';
 // an Instagram handle. So we match incoming bookings to leads outreach has
 // already logged (by email, then by name) and flag anything we can't place,
 // rather than silently creating unidentifiable records.
+//
+// ONLY the first-time consultation becomes a lead. Current clients book their
+// coach check-ins on the same Calendly account, and those are not sales
+// activity — they were ending up in the lead pool, and a check-in booked by
+// someone sharing a lead's name could overwrite that lead's real call time.
+// Anything that isn't the consultation is recorded in the log and otherwise
+// ignored. This is the gate; the active-client check in api/data.js is the
+// second line behind it.
 // ============================================================
+
+// The consultation event type, matched loosely so renaming it in Calendly
+// doesn't quietly switch the gate off. Covers "Body Biz First-Time
+// Consultation" and the "Consultaion" misspelling in the booking-page slug.
+const CONSULTATION_EVENT = /first[\s-]*time|consultation|consultaion/i;
+
+// A payload with no event name at all is an anomaly rather than a check-in,
+// so it's let through and logged loudly. Dropping it would mean silently
+// losing a real sales call, which is the worse of the two failures — and the
+// active-client check still stands behind this either way.
+function isConsultation(eventName) {
+  if (!eventName) return true;
+  return CONSULTATION_EVENT.test(eventName);
+}
 
 async function kvCommand(cmd) {
   const url = process.env.KV_REST_API_URL;
@@ -120,6 +142,27 @@ export default async function handler(request) {
   const eventName = (p.scheduled_event && p.scheduled_event.name) || '';
   const calendlyUri = p.uri || '';
   if (!inviteeName && !inviteeEmail) return json({ ok: true, skipped: 'no invitee details' });
+
+  // The gate. Applies to cancellations as well as bookings: we never created
+  // a record for a check-in, so there's nothing to cancel either.
+  if (!isConsultation(eventName)) {
+    await logAttempt({
+      event,
+      eventType: eventName,
+      invitee: inviteeName,
+      result: `ignored — "${eventName}" is not the consultation calendar`,
+    });
+    // 200, not an error: Calendly retries anything else, and this booking was
+    // handled correctly by being left alone.
+    return json({ ok: true, action: 'ignored', eventType: eventName });
+  }
+  if (!eventName) {
+    await logAttempt({
+      event,
+      invitee: inviteeName,
+      result: 'WARNING — Calendly sent no event type name; accepted as a consultation',
+    });
+  }
 
   const startDate = start ? new Date(start) : null;
   // Store in the same local format the dashboard uses elsewhere.
