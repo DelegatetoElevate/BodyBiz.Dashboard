@@ -113,12 +113,22 @@ async function mirrorLeadsToSheet(calls) {
 // This has to happen server-side: outreach accounts receive no client list at
 // all, so their browser could never work out who is already a client.
 //
-// A lead marked signed is deliberately NOT flagged. Signing up is exactly
-// what turns a lead into a client, so flagging them would erase every
-// conversion from the funnel and the close rate.
+// Two different flags, because there are two different cases.
 //
-// Nothing is deleted and the flag is never stored — it's recomputed on every
-// read, so a client who churns reappears as a lead on their next booking.
+// _hideFromSales — the booking created a NEW lead record. Nothing about it is
+// sales activity, so it comes out of every Sales view.
+//
+// _hideFromCalls — the booking landed on the person's ORIGINAL lead record,
+// the one from when they signed up. The webhook matches an incoming booking
+// to an existing lead by email then name, so a client who books a check-in
+// has the new call date written onto the record that converted them. Hiding
+// that record outright would erase a real conversion from the funnel, so it
+// stays everywhere except the call reminder lists — the scheduled call is a
+// check-in, not a sales call.
+//
+// Nothing is deleted and neither flag is stored — both are recomputed on
+// every read, so a client who churns reappears as a lead on their next
+// booking.
 // ============================================================
 const normLeadName = (n) =>
   String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
@@ -131,9 +141,10 @@ const normLeadHandle = (h) =>
     .toLowerCase();
 
 function withoutFlag(lead) {
-  if (lead._hideFromSales === undefined) return lead;
+  if (lead._hideFromSales === undefined && lead._hideFromCalls === undefined) return lead;
   const clean = { ...lead };
   delete clean._hideFromSales;
+  delete clean._hideFromCalls;
   return clean;
 }
 
@@ -152,11 +163,15 @@ function flagActiveClientLeads(data) {
   });
 
   return calls.map((lead) => {
-    if (lead.signed === 'yes') return withoutFlag(lead);
     const n = normLeadName(lead.name);
     const h = normLeadHandle(lead.handle);
     const isActiveClient = (n && activeNames.has(n)) || (h && activeHandles.has(h));
-    return isActiveClient ? { ...lead, _hideFromSales: true } : withoutFlag(lead);
+    const clean = withoutFlag(lead);
+    if (!isActiveClient) return clean;
+    // Their original, converted lead record: keep it in the funnel, but its
+    // scheduled call is a check-in and doesn't belong in call reminders.
+    if (lead.signed === 'yes') return { ...clean, _hideFromCalls: true };
+    return { ...clean, _hideFromSales: true };
   });
 }
 
@@ -221,10 +236,10 @@ export default async function handler(req, res) {
     try {
       const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
-      // _hideFromSales is derived on read, never stored. The browser receives
-      // it and sends the whole dataset back, so strip it here or a stale flag
-      // gets baked into the database and outlives the client status that
-      // caused it.
+      // _hideFromSales / _hideFromCalls are derived on read, never stored. The
+      // browser receives them and sends the whole dataset back, so strip them
+      // here or a stale flag gets baked into the database and outlives the
+      // client status that caused it.
       if (Array.isArray(payload.calls)) {
         payload.calls = payload.calls.map(withoutFlag);
       }

@@ -160,7 +160,7 @@ export default async function handler(request) {
         updatedAt: new Date().toISOString(), updatedBy: 'Calendly',
       };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
-      await logAttempt({ event, invitee: inviteeName, result: 'cancelled', lead: data.calls[idx].name });
+      await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'cancelled', lead: data.calls[idx].name });
       return json({ ok: true, action: 'cancelled', lead: data.calls[idx].name });
     }
 
@@ -188,7 +188,7 @@ export default async function handler(request) {
         needsHandle: !(lead.handle || handle),
       };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
-      await logAttempt({ event, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, callDate: booking.callDate, callTime: booking.callTime });
+      await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, callDate: booking.callDate, callTime: booking.callTime });
       return json({ ok: true, action: 'matched existing lead', lead: data.calls[idx].name });
     }
 
@@ -211,10 +211,10 @@ export default async function handler(request) {
     };
     data.calls.unshift(rec);
     await kvCommand(['SET', KEY, JSON.stringify(data)]);
-    await logAttempt({ event, invitee: inviteeName, result: 'created new lead', lead: rec.name, callDate: rec.callDate, callTime: rec.callTime });
+    await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'created new lead', lead: rec.name, callDate: rec.callDate, callTime: rec.callTime });
     return json({ ok: true, action: 'created new lead', lead: rec.name });
   } catch (e) {
-    await logAttempt({ event, invitee: inviteeName, result: 'ERROR', error: String(e) });
+    await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'ERROR', error: String(e) });
     return json({ ok: false, error: String(e) }, 500);
   }
 }
