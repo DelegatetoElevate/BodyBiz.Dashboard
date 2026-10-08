@@ -2981,6 +2981,23 @@ function findExistingLeads({handle, email, name}){
   const rank = {'Instagram handle':0,'email':1,'name':2};
   return out.sort((a,b)=>rank[a.how]-rank[b.how]);
 }
+
+// ============================================================
+// EXISTING CLIENTS BOOKING A CALL
+// Current clients book check-in calls through the same Calendly link as
+// prospects, so a lead record gets created for them. The server marks those
+// records (_hideFromSales — see api/data.js) and every Sales view reads the
+// lead list through salesLeads() instead of `calls` directly. Going through
+// one helper is the point: hiding a record in Upcoming Calls but not in All
+// Leads or the month counts would just move the problem somewhere else.
+//
+// Duplicate detection still searches the full list on purpose. If outreach
+// couldn't find these records at all they'd log a fresh lead for a client,
+// which would be hidden the moment the server saw it — a record that
+// vanishes on save is worse than one that's explained.
+// ============================================================
+function isClientLead(l){ return !!(l && l._hideFromSales); }
+function salesLeads(){ return calls.filter(l=>!isClientLead(l)); }
 // Plain-English summary of where a lead got to.
 function leadOutcomeText(l){
   if(l.signed==='yes') return 'signed up — became a client';
@@ -3011,6 +3028,17 @@ async function bookCall(){
   if(matches.length){
     const m = matches[0];
     const l = m.lead;
+    // Already an active client — their check-in bookings are deliberately
+    // kept out of Sales, so offering to schedule onto that record would
+    // produce a call nobody can see afterwards.
+    if(isClientLead(l)){
+      msg.style.display='block';
+      msg.style.color='#5c9aff';
+      msg.innerHTML = `
+        <strong>${l.name}</strong> is already an active client${l.handle?' · @'+normaliseHandle(l.handle):''}.<br>
+        <span style="color:var(--sub)">Check-in calls for current clients aren't tracked in Sales, so nothing was booked here. Their coach handles these.</span>`;
+      return;
+    }
     msg.style.display='block';
     msg.style.color='var(--yellow)';
     msg.innerHTML = `
@@ -3149,15 +3177,24 @@ function searchLeads(){
       String(l.handle||'').toLowerCase().includes(ql)
     )
   ).map(l=>({lead:l, how:'partial match'}));
-  const all = [...matches, ...partial].slice(0,8);
+  const found = [...matches, ...partial];
+  // Someone who's already an active client isn't shown as a lead, but saying
+  // nothing would send outreach off to log them again.
+  const clientHits = found.filter(m=>isClientLead(m.lead));
+  const all = found.filter(m=>!isClientLead(m.lead)).slice(0,8);
 
   box.style.display='block';
+  const clientNote = clientHits.length
+    ? `<div style="padding:10px 12px;background:rgba(92,154,255,0.08);border:1px solid rgba(92,154,255,0.3);border-radius:4px;font-size:12px;color:#5c9aff;margin-bottom:6px">
+        ${clientHits.map(m=>`<strong>${m.lead.name}</strong>`).join(', ')} ${clientHits.length>1?'are':'is'} already an active client — no need to log ${clientHits.length>1?'them':'them'} as a lead. Check-in calls aren't tracked here.
+      </div>` : '';
+
   if(!all.length){
-    box.innerHTML = `<div style="padding:10px 12px;background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.25);border-radius:4px;font-size:12px;color:var(--green)">
+    box.innerHTML = clientNote || `<div style="padding:10px 12px;background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.25);border-radius:4px;font-size:12px;color:var(--green)">
       ✓ No existing record for "${q}" — safe to log as a new lead.</div>`;
     return;
   }
-  box.innerHTML = `<div style="font-size:11px;color:var(--sub);margin-bottom:6px">${all.length} existing record${all.length>1?'s':''} found — check before logging again:</div>` +
+  box.innerHTML = clientNote + `<div style="font-size:11px;color:var(--sub);margin-bottom:6px">${all.length} existing record${all.length>1?'s':''} found — check before logging again:</div>` +
     all.map(m=>{
       const l=m.lead; const ig=normaliseHandle(l.handle||'');
       const hasCall = l.callDate && hoursUntilCall(l) > -168;
@@ -3305,7 +3342,7 @@ function renderStartFollowUps(){
   if(!box) return;
   const today = new Date(); today.setHours(0,0,0,0);
   // Keep sent ones visible for a week so there's a record of what went out.
-  const list = calls.filter(l=>{
+  const list = salesLeads().filter(l=>{
     const f = l.followUp;
     if(!f || !f.dueDate) return false;
     if(!f.sent) return true;
@@ -3505,7 +3542,7 @@ function renderUpcomingCalls(){
   // so no-shows can still be rescheduled. Leads who already signed are
   // included too — a re-engagement call still needs its reminders sent.
   const now = new Date();
-  const list = calls.filter(l=>{
+  const list = salesLeads().filter(l=>{
     if(!l.callDate) return false;
     const h = hoursUntilCall(l);
     return h !== null && h > -168;
@@ -3675,11 +3712,15 @@ function toggleLead(id,field,val){
 function renderSalesPage(){
   renderUpcomingCalls();
   renderStartFollowUps();
-  const total=calls.length;
-  const booked=calls.filter(c=>c.booked==='yes').length;
-  const showed=calls.filter(c=>c.showed==='yes').length;
-  const signed=calls.filter(c=>c.signed==='yes').length;
-  const noshow=calls.filter(c=>c.booked==='yes'&&c.showed==='no').length;
+  // Existing clients' check-in bookings aren't sales activity, so they're out
+  // of the counters as well as the lists — otherwise the totals wouldn't
+  // reconcile with what's on screen.
+  const sl=salesLeads();
+  const total=sl.length;
+  const booked=sl.filter(c=>c.booked==='yes').length;
+  const showed=sl.filter(c=>c.showed==='yes').length;
+  const signed=sl.filter(c=>c.signed==='yes').length;
+  const noshow=sl.filter(c=>c.booked==='yes'&&c.showed==='no').length;
 
   const showRate=booked?Math.round(showed/booked*100):0;
   const signRate=showed?Math.round(signed/showed*100):0;
@@ -3720,7 +3761,7 @@ function renderSalesPage(){
   // Source breakdown
   const srcColors={'Instagram Inbound':'var(--pink)','Instagram Outbound':'var(--orange)','Email':'var(--yellow)','Referral':'var(--green)'};
   const srcStats={};
-  calls.forEach(c=>{
+  sl.forEach(c=>{
     const s=c.source||'Other';
     if(!srcStats[s])srcStats[s]={total:0,booked:0,showed:0,signed:0};
     srcStats[s].total++;
@@ -3766,7 +3807,7 @@ function renderCallsByMonth(){
   const range = document.getElementById('cbm_range')?.value || '6';
 
   // Build the list of months to show
-  const dated = calls.filter(c => c.date);
+  const dated = salesLeads().filter(c => c.date);
   let months = [];
   if(range === 'all'){
     const keys = [...new Set(dated.map(c => c.date.slice(0,7)))].sort().reverse();
@@ -3846,7 +3887,7 @@ function renderCallsTable(){
   const fc=document.getElementById('sl_filterCountry')?.value||'';
   const FLAGS={AUS:'🇦🇺',USA:'🇺🇸',CAN:'🇨🇦',UK:'🇬🇧',NZ:'🇳🇿',Other:'🌍'};
 
-  let list=[...calls].filter(c=>{
+  let list=[...salesLeads()].filter(c=>{
     const outcome=c.signed==='yes'?'converted':c.showed==='yes'?'showed':c.booked==='yes'?'noshow':'booked';
     if(fo&&outcome!==fo)return false;
     if(fs&&(c.source||'')!==fs)return false;
