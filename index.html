@@ -3022,6 +3022,23 @@ function findExistingLeads({handle, email, name}){
 //     All Leads and the counters and only drops out of the call reminders.
 function isClientLead(l){ return !!(l && l._hideFromSales); }
 function isActiveClientLead(l){ return !!(l && (l._hideFromSales || l._hideFromCalls)); }
+
+// Admin's manual override: this record is a genuine lead, keep it in Sales no
+// matter what the client match says. Needed because name matching cannot tell
+// a client's check-in apart from a real lead who went on to become that
+// client — the two look identical. Without this a wrong match can't be undone.
+async function setRealLead(id, on){
+  const l = calls.find(c=>c.id===id);
+  if(!l) return;
+  const msg = on
+    ? `Keep ${l.name} in the lead list?\n\nThey match a current client, so they're hidden from Sales at the moment. This marks the record as a genuine lead and it stays visible from now on.`
+    : `Remove ${l.name} from the lead list?\n\nThey'll go back to being hidden from Sales, because they match a current client.`;
+  if(!confirm(msg)) return;
+  try{
+    await saveLeadChange(id, {realLead: on ? 'yes' : ''});
+    renderSalesPage();
+  }catch(e){ alert('Could not save: '+e.message); }
+}
 function salesLeads(){ return calls.filter(l=>!isClientLead(l)); }
 // Upcoming Calls and Start Date Follow-Ups: no current client's check-in.
 function callReminderLeads(){ return salesLeads().filter(l=>!l._hideFromCalls); }
@@ -3512,9 +3529,16 @@ async function calendlyLog(){
   }
   box.style.color='var(--sub)';
   box.innerHTML = d.attempts.map(a=>{
-    const bad = /REJECT|ERROR/i.test(a.result||'');
+    // A booking left alone on purpose is neither a success nor a failure, so
+    // it reads grey rather than green — green everywhere would bury the real
+    // confirmations among the ignored check-ins.
+    const res = a.result || '';
+    const bad = /REJECT|ERROR/i.test(res);
+    const warn = /WARNING/i.test(res);
+    const skipped = /^ignored/i.test(res);
+    const col = bad ? 'var(--red)' : warn ? 'var(--yellow)' : skipped ? 'var(--sub)' : 'var(--green)';
     return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-      <span style="color:${bad?'var(--red)':'var(--green)'}">${a.result}</span>
+      <span style="color:${col}">${a.result}</span>
       ${a.invitee?` · ${a.invitee}`:''}${a.callDate?` · ${a.callDate} ${a.callTime||''}`:''}
       ${a.eventType?' '+calendlyEventTag({calendlyEvent:a.eventType}):''}
       <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}</span>
@@ -3962,7 +3986,12 @@ function renderCallsTable(){
 
   document.getElementById('callsTableBody').innerHTML=list.length
     ?list.map(c=>`<tr>
-      <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}${isClientLead(c)?` <span title="Matches a current client, so this record is kept out of the Sales views" style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(138,138,154,0.15);color:var(--sub);border:1px solid rgba(138,138,154,0.4);white-space:nowrap">EXISTING CLIENT</span>`:''}</td>
+      <td style="font-weight:500">
+        <span style="cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}</span>
+        ${isClientLead(c)?` <span title="Matches a current client, so this record is kept out of the Sales views" style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(138,138,154,0.15);color:var(--sub);border:1px solid rgba(138,138,154,0.4);white-space:nowrap">EXISTING CLIENT</span>
+        <button class="admin-only" onclick="event.stopPropagation();setRealLead('${c.id}',true)" title="Keep this record in the lead list — it's a genuine lead, not a client's check-in" style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(233,30,140,0.12);color:var(--pink);border:1px solid rgba(233,30,140,0.4);cursor:pointer;white-space:nowrap">+ KEEP AS LEAD</button>`:''}
+        ${c.realLead==='yes'?` <span title="Marked by hand as a genuine lead, so the current-client match is ignored for this record" style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(0,229,160,0.1);color:var(--green);border:1px solid rgba(0,229,160,0.3);white-space:nowrap">KEPT AS LEAD</span><button class="admin-only" onclick="event.stopPropagation();setRealLead('${c.id}',false)" title="Undo — let the current-client match hide this record again" style="background:none;border:none;color:var(--sub);cursor:pointer;font-size:10px;padding:0 2px">✕</button>`:''}
+      </td>
       <td style="color:var(--pink);font-size:12px">${c.handle?'@'+c.handle:'—'}</td>
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.source||'—'}${c.calendlyEvent?`<div style="margin-top:3px">${calendlyEventTag(c)}</div>`:''}</td>
