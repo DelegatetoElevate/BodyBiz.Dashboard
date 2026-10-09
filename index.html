@@ -794,6 +794,15 @@ body{visibility:hidden}
           <option value="NZ">🇳🇿 NZ</option>
           <option value="Other">Other</option>
         </select>
+        <!-- Without this there is no way to reach a hidden record. A lead
+             that matches an active client drops out of this table, so if the
+             match was wrong, or the lead genuinely converted and nobody
+             ticked Signed, it can't be corrected from anywhere. Admin only —
+             outreach has no business in these. -->
+        <label class="admin-only" title="Leads that match a current client, so they're kept out of Sales. Shown here so they can be corrected." style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--sub);cursor:pointer;white-space:nowrap">
+          <input type="checkbox" id="sl_showClients" onchange="renderCallsTable()" style="accent-color:var(--pink)">
+          Show existing clients <span id="sl_hiddenCount" style="opacity:.7"></span>
+        </label>
       </div>
     </div>
     <div style="overflow-x:auto"><table>
@@ -1364,6 +1373,13 @@ body{visibility:hidden}
     </div>
     <div class="form-row">
       <div class="form-group"><div class="form-label">Date</div><input class="form-input" id="lm_date" type="date"></div>
+      <!-- The sales call itself. Until now this could only be set when
+           booking or rescheduling, which meant a call already in the past
+           couldn't be recorded or corrected anywhere. -->
+      <div class="form-group" style="display:flex;gap:10px">
+        <div style="flex:1"><div class="form-label">Call Date</div><input class="form-input" id="lm_callDate" type="date"></div>
+        <div style="width:120px"><div class="form-label">Call Time</div><input class="form-input" id="lm_callTime" type="time"></div>
+      </div>
       <div class="form-group"><div class="form-label">Notes</div><input class="form-input" id="lm_notes" placeholder="Optional notes..."></div>
     </div>
     <div style="margin:14px 0 6px">
@@ -3496,16 +3512,9 @@ async function calendlyLog(){
   }
   box.style.color='var(--sub)';
   box.innerHTML = d.attempts.map(a=>{
-    // A booking left alone on purpose isn't a success or a failure, so it
-    // reads grey rather than green — green everywhere would hide the real
-    // confirmations among the ignored check-ins.
-    const res = a.result || '';
-    const bad = /REJECT|ERROR/i.test(res);
-    const warn = /WARNING/i.test(res);
-    const skipped = /^ignored/i.test(res);
-    const col = bad ? 'var(--red)' : warn ? 'var(--yellow)' : skipped ? 'var(--sub)' : 'var(--green)';
+    const bad = /REJECT|ERROR/i.test(a.result||'');
     return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-      <span style="color:${col}">${a.result}</span>
+      <span style="color:${bad?'var(--red)':'var(--green)'}">${a.result}</span>
       ${a.invitee?` · ${a.invitee}`:''}${a.callDate?` · ${a.callDate} ${a.callTime||''}`:''}
       ${a.eventType?' '+calendlyEventTag({calendlyEvent:a.eventType}):''}
       <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}</span>
@@ -3672,6 +3681,8 @@ function openLeadModal(id){
   document.getElementById('lm_country').value=c.country||'Other';
   document.getElementById('lm_source').value=c.source||'Instagram Inbound';
   document.getElementById('lm_date').value=c.date||new Date().toISOString().slice(0,10);
+  document.getElementById('lm_callDate').value=c.callDate||'';
+  document.getElementById('lm_callTime').value=c.callTime||'';
   document.getElementById('lm_notes').value=c.notes||'';
   leadToggleState.booked=c.booked||'no';
   leadToggleState.showed=c.showed||'no';
@@ -3711,6 +3722,8 @@ async function saveLeadModal(){
     country:document.getElementById('lm_country').value,
     source:document.getElementById('lm_source').value,
     date:document.getElementById('lm_date').value,
+    callDate:document.getElementById('lm_callDate').value,
+    callTime:document.getElementById('lm_callTime').value,
     notes:document.getElementById('lm_notes').value,
     booked:leadToggleState.booked,
     showed:leadToggleState.showed,
@@ -3930,7 +3943,14 @@ function renderCallsTable(){
   const fc=document.getElementById('sl_filterCountry')?.value||'';
   const FLAGS={AUS:'🇦🇺',USA:'🇺🇸',CAN:'🇨🇦',UK:'🇬🇧',NZ:'🇳🇿',Other:'🌍'};
 
-  let list=[...salesLeads()].filter(c=>{
+  // Hidden records are reachable here, behind a checkbox, so a wrong match or
+  // a missing Signed tick can be fixed. The count is shown either way, so
+  // it's visible that something is being held back rather than lost.
+  const showClients = !!document.getElementById('sl_showClients')?.checked;
+  const hiddenCount = calls.filter(isClientLead).length;
+  const cnt = document.getElementById('sl_hiddenCount');
+  if(cnt) cnt.textContent = hiddenCount ? '('+hiddenCount+')' : '';
+  let list=[...(showClients ? calls : salesLeads())].filter(c=>{
     const outcome=c.signed==='yes'?'converted':c.showed==='yes'?'showed':c.booked==='yes'?'noshow':'booked';
     if(fo&&outcome!==fo)return false;
     if(fs&&(c.source||'')!==fs)return false;
@@ -3942,7 +3962,7 @@ function renderCallsTable(){
 
   document.getElementById('callsTableBody').innerHTML=list.length
     ?list.map(c=>`<tr>
-      <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}</td>
+      <td style="font-weight:500;cursor:pointer" onclick="openLeadModal('${c.id}')">${c.name}${isClientLead(c)?` <span title="Matches a current client, so this record is kept out of the Sales views" style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(138,138,154,0.15);color:var(--sub);border:1px solid rgba(138,138,154,0.4);white-space:nowrap">EXISTING CLIENT</span>`:''}</td>
       <td style="color:var(--pink);font-size:12px">${c.handle?'@'+c.handle:'—'}</td>
       <td style="font-size:13px">${FLAGS[c.country]||'🌍'} ${c.country||'—'}</td>
       <td style="color:var(--sub);font-size:12px">${c.source||'—'}${c.calendlyEvent?`<div style="margin-top:3px">${calendlyEventTag(c)}</div>`:''}</td>
