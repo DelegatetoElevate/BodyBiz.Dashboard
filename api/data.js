@@ -163,10 +163,15 @@ function flagActiveClientLeads(data) {
   });
 
   return calls.map((lead) => {
+    const clean = withoutFlag(lead);
+    // Admin has said this one is a genuine lead: it stays in Sales whatever
+    // the match says. Name matching can't tell a client's check-in from a
+    // real lead who later became that client, so there has to be a way to
+    // settle it by hand — otherwise a wrong match is uncorrectable.
+    if (lead.realLead === 'yes') return clean;
     const n = normLeadName(lead.name);
     const h = normLeadHandle(lead.handle);
     const isActiveClient = (n && activeNames.has(n)) || (h && activeHandles.has(h));
-    const clean = withoutFlag(lead);
     if (!isActiveClient) return clean;
     // Their original, converted lead record: keep it in the funnel, but its
     // scheduled call is a check-in and doesn't belong in call reminders.
@@ -254,6 +259,7 @@ export default async function handler(req, res) {
         'callDate', 'callTime', 'reminders', 'rescheduleHistory', 'followUp', 'bookedBy',
         'addedAt', 'addedBy', 'updatedAt', 'updatedBy',
         'calendlyUri', 'calendlyEvent', 'needsHandle',
+        'realLead',   // set per-record via /api/leads; a stale tab must not undo it
       ];
       try {
         const currentRaw = await kvCommand(['GET', KEY]);

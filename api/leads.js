@@ -11,7 +11,11 @@ const OUTREACH_FIELDS = [
   'followUp',   // start-date reminder: { startDate, dueDate, note, sent, sentAt, by }
   'needsHandle',// cleared once someone attaches the handle to a Calendly booking
 ];
-const ADMIN_FIELDS = [...OUTREACH_FIELDS, 'signed', 'date'];
+// `realLead` overrides the automatic "this is a current client's booking"
+// match in api/data.js and keeps the record in the Sales views for good.
+// Admin only: deciding that someone counts as a lead is a judgement call, and
+// letting outreach un-hide clients would defeat the point of hiding them.
+const ADMIN_FIELDS = [...OUTREACH_FIELDS, 'signed', 'date', 'realLead'];
 
 function base64urlDecode(str) {
   str = str.replace(/-/g, '+').replace(/_/g, '/');
