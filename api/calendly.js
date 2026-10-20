@@ -90,27 +90,50 @@ async function signatureValid(rawBody, header, secret) {
   return diff === 0;
 }
 
+// Booking details are typed by the public and rendered as HTML on the
+// dashboard, so anything that could form markup is stripped before storing.
+function clean(v, max) {
+  return String(v == null ? '' : v)
+    .replace(/[<>`"]/g, '')
+    .replace(/'/g, '\u2019')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+// Same shape as the handle normaliser in api/data.js, so a handle typed into
+// Calendly matches one outreach logged however either was written.
+const normHandle = (h) =>
+  String(h || '').trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/^(www\.|m\.)?instagram\.com\//i, '')
+    .split(/[/?#]/)[0]
+    .replace(/^@+/, '')
+    .toLowerCase();
+// Instagram's rules: letters, numbers, dots, underscores, up to 30.
+const plausibleHandle = (h) =>
+  /^[a-z0-9._]{1,30}$/.test(h) && !/^\.|\.$|\.\./.test(h) && !/^\d+$/.test(h);
+
 const normName = (n) =>
   String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 
-// Some booking forms ask for an Instagram handle as a custom question. This
-// one doesn't today, but if it's ever added the answer arrives here and the
-// booking will match perfectly instead of falling back to the name.
+// The consultation booking form asks "Instagram (@username)" (added 20 Oct
+// 2026). The answer is used to match the booking to a lead outreach already
+// logged when the email doesn't match, before falling back to the name.
+// Returns { handle, typed }: handle is '' when the answer can't be a real
+// Instagram handle, and typed keeps what they wrote so it can be checked.
 function handleFromAnswers(payload) {
   const qa = payload.questions_and_answers || [];
   // Must actually be an Instagram question. A bare "@" used to match here,
   // which meant an email question could be captured as the handle — wrong
   // data is worse than none, since nobody would know to correct it.
   const hit = qa.find((q) => /instagram|\big\b|insta\b/i.test(q.question || ''));
-  if (!hit || !hit.answer) return '';
-  const ans = String(hit.answer).trim();
-  if (ans.includes('@') && /\.[a-z]{2,}$/i.test(ans)) return '';   // that's an email
-  return ans
-    .replace(/^https?:\/\//i, '')
-    .replace(/^(www\.)?instagram\.com\//i, '')
-    .split(/[/?#]/)[0]
-    .replace(/^@+/, '')
-    .trim();
+  if (!hit || !hit.answer) return { handle: '', typed: '' };
+  const typed = clean(hit.answer, 60);
+  if (/\S@\S+\.[a-z]{2,}$/i.test(typed)) return { handle: '', typed };   // that's an email
+  const h = normHandle(typed);
+  return plausibleHandle(h) ? { handle: h, typed: '' } : { handle: '', typed };
 }
 
 export default async function handler(request) {
@@ -136,8 +159,8 @@ export default async function handler(request) {
 
   const event = body.event;                    // invitee.created | invitee.canceled
   const p = body.payload || {};
-  const inviteeName = p.name || '';
-  const inviteeEmail = (p.email || '').toLowerCase();
+  const inviteeName = clean(p.name, 80);
+  const inviteeEmail = clean(p.email, 120).toLowerCase();
   const start = p.scheduled_event && p.scheduled_event.start_time;
   const eventName = (p.scheduled_event && p.scheduled_event.name) || '';
   const calendlyUri = p.uri || '';
@@ -177,9 +200,15 @@ export default async function handler(request) {
     // Already linked to this exact Calendly booking?
     let idx = data.calls.findIndex((c) => c.calendlyUri && c.calendlyUri === calendlyUri);
 
-    // Otherwise match a lead outreach already logged: email first, then name.
+    // Otherwise match a lead outreach already logged: email, then Instagram
+    // handle, then name. The handle sits before the name because names are
+    // ambiguous ("Mike" vs "Michael Torres") and a handle is unique.
+    const { handle, typed: handleTyped } = handleFromAnswers(p);
     if (idx === -1 && inviteeEmail) {
       idx = data.calls.findIndex((c) => (c.email || '').toLowerCase() === inviteeEmail);
+    }
+    if (idx === -1 && handle) {
+      idx = data.calls.findIndex((c) => normHandle(c.handle) === handle);
     }
     if (idx === -1 && inviteeName) {
       const n = normName(inviteeName);
@@ -208,7 +237,6 @@ export default async function handler(request) {
     }
 
     // invitee.created
-    const handle = handleFromAnswers(p);
     const booking = {
       callDate: startDate ? fmtDate(startDate) : '',
       callTime: startDate ? fmtTime(startDate) : '',
@@ -229,9 +257,10 @@ export default async function handler(request) {
         handle: lead.handle || handle,
         // Keep the flag only if we still have no handle for them.
         needsHandle: !(lead.handle || handle),
+        handleTyped: (lead.handle || handle) ? '' : (handleTyped || lead.handleTyped || ''),
       };
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
-      await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, callDate: booking.callDate, callTime: booking.callTime });
+      await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, handle: handle || (handleTyped ? `could not use "${handleTyped}"` : ''), callDate: booking.callDate, callTime: booking.callTime });
       return json({ ok: true, action: 'matched existing lead', lead: data.calls[idx].name });
     }
 
@@ -250,11 +279,12 @@ export default async function handler(request) {
       addedAt: new Date().toISOString(),
       addedBy: 'Calendly',
       needsHandle: !handle,
+      handleTyped,
       ...booking,
     };
     data.calls.unshift(rec);
     await kvCommand(['SET', KEY, JSON.stringify(data)]);
-    await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'created new lead', lead: rec.name, callDate: rec.callDate, callTime: rec.callTime });
+    await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'created new lead', lead: rec.name, handle: handle || (handleTyped ? `could not use "${handleTyped}"` : ''), callDate: rec.callDate, callTime: rec.callTime });
     return json({ ok: true, action: 'created new lead', lead: rec.name });
   } catch (e) {
     await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'ERROR', error: String(e) });

@@ -260,6 +260,7 @@ export default async function handler(req, res) {
         'addedAt', 'addedBy', 'updatedAt', 'updatedBy',
         'calendlyUri', 'calendlyEvent', 'needsHandle',
         'realLead',   // set per-record via /api/leads; a stale tab must not undo it
+        'handleTyped',   // what was typed in Calendly's Instagram box when it wasn't a usable handle
       ];
       try {
         const currentRaw = await kvCommand(['GET', KEY]);
