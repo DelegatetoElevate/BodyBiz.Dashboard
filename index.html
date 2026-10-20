@@ -629,7 +629,7 @@ body{visibility:hidden}
           <input class="form-input" id="bc_date" type="date">
         </div>
         <div class="form-group">
-          <div class="form-label">Call Time <span style="color:var(--pink)">*</span></div>
+          <div class="form-label">Call Time <span style="color:var(--pink)">*</span> <span style="opacity:.6;font-weight:400">(Luke's time, Sydney)</span></div>
           <input class="form-input" id="bc_time" type="time">
         </div>
         <button class="btn btn-pink" style="height:38px" onclick="bookCall()">Book Call</button>
@@ -647,6 +647,7 @@ body{visibility:hidden}
     </div>
     <div class="card-body">
       <div id="upcomingCalls"></div>
+      <div id="archivedCalls"></div>
     </div>
   </div>
 
@@ -687,6 +688,7 @@ body{visibility:hidden}
       </div>
       <div id="sf_msg" style="font-size:12px;margin-bottom:10px;display:none"></div>
       <div id="startFollowUps"></div>
+      <div id="archivedFollowUps"></div>
     </div>
   </div>
 
@@ -1378,7 +1380,7 @@ body{visibility:hidden}
            couldn't be recorded or corrected anywhere. -->
       <div class="form-group" style="display:flex;gap:10px">
         <div style="flex:1"><div class="form-label">Call Date</div><input class="form-input" id="lm_callDate" type="date"></div>
-        <div style="width:120px"><div class="form-label">Call Time</div><input class="form-input" id="lm_callTime" type="time"></div>
+        <div style="width:120px"><div class="form-label">Call Time <span style="opacity:.6;font-weight:400">(Sydney)</span></div><input class="form-input" id="lm_callTime" type="time" title="Luke's time (Sydney)"></div>
       </div>
       <div class="form-group"><div class="form-label">Notes</div><input class="form-input" id="lm_notes" placeholder="Optional notes..."></div>
     </div>
@@ -2926,20 +2928,62 @@ const REMINDER_STEPS = [
   { key: 'r1',  hours: 1,  label: '1 hour'  },
 ];
 
+// ============================================================
+// CALL TIMES ARE LUKE'S TIME (Sydney)
+// callDate/callTime are stored as wall-clock time in Luke's time zone — the
+// Calendly webhook writes them that way, and every input that sets a call
+// is labelled as Luke's time. They must be read in that zone too: reading
+// them in the viewer's own zone put every countdown, reminder and archive
+// cut-off about 3 hours out for outreach in Manila.
+// Change BUSINESS_TZ here (and in api/calendly.js) if Luke moves.
+// ============================================================
+const BUSINESS_TZ = 'Australia/Sydney';
+
+// Offset of a zone from UTC, in ms, at a given instant (handles daylight saving).
+function tzOffsetMs(ms, tz){
+  const parts = new Intl.DateTimeFormat('en-US',{timeZone:tz,hourCycle:'h23',
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})
+    .formatToParts(new Date(ms)).reduce((o,p)=>(o[p.type]=p.value,o),{});
+  const asUTC = Date.UTC(+parts.year, +parts.month-1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+  return asUTC - Math.floor(ms/1000)*1000;
+}
+// "2026-10-22" + "20:00" in Luke's zone → the real moment.
+function zonedToDate(dateStr, timeStr, tz){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr||'');
+  const t = /^(\d{1,2}):(\d{2})/.exec(timeStr||'09:00') || [0,'9','00'];
+  if(!m) return null;
+  const naive = Date.UTC(+m[1], +m[2]-1, +m[3], +t[1], +t[2]);
+  let ms = naive - tzOffsetMs(naive, tz);
+  const off2 = tzOffsetMs(ms, tz);              // second pass settles daylight-saving edges
+  ms = naive - off2;
+  const dt = new Date(ms);
+  return isNaN(dt) ? null : dt;
+}
 function callDateTime(l){
   if(!l || !l.callDate) return null;
-  const dt = new Date(`${l.callDate}T${l.callTime || '09:00'}`);
-  return isNaN(dt) ? null : dt;
+  return zonedToDate(l.callDate, l.callTime || '09:00', BUSINESS_TZ);
+}
+// Whether the viewer's clock differs from Luke's right now.
+function viewerInBusinessTz(){
+  const now = Date.now();
+  return tzOffsetMs(now, BUSINESS_TZ) === -new Date(now).getTimezoneOffset()*60000;
 }
 function hoursUntilCall(l){
   const dt = callDateTime(l);
   return dt ? (dt - new Date()) / 3600000 : null;
 }
+// Shown in Luke's time with the zone named, plus the viewer's own time when
+// it differs, so outreach in Manila knows when to actually send the DMs.
 function fmtCallWhen(l){
   const dt = callDateTime(l);
   if(!dt) return '';
-  return dt.toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})
-       + ' · ' + dt.toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+  const main = dt.toLocaleDateString('en-AU',{timeZone:BUSINESS_TZ,weekday:'short',day:'numeric',month:'short'})
+       + ' · ' + dt.toLocaleTimeString('en-AU',{timeZone:BUSINESS_TZ,hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+  if(viewerInBusinessTz()) return main;
+  const sameDay = dt.toLocaleDateString('en-AU',{timeZone:BUSINESS_TZ}) === dt.toLocaleDateString('en-AU');
+  const mine = (sameDay ? '' : dt.toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})+' ')
+       + dt.toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+  return `${main} <span style="opacity:.7">(${mine} your time)</span>`;
 }
 // Human countdown: "in 3h", "in 2 days", "45 min ago"
 function fmtCountdown(h){
@@ -3141,7 +3185,7 @@ async function bookCall(){
     calls.unshift(d.lead);
     localStorage.setItem('bb_calls_v2', JSON.stringify(calls));
     ['bc_name','bc_handle','bc_email','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
-    show(`✓ Call booked for ${name} — ${fmtCallWhen(d.lead)}`,'var(--green)');
+    show(`✓ Call booked for ${name} — ${fmtCallWhen(d.lead).replace(/<[^>]+>/g,'')}`,'var(--green)');
     setTimeout(()=>{msg.style.display='none';},5000);
     renderSalesPage();
   }catch(e){
@@ -3206,7 +3250,7 @@ async function bookOntoExisting(leadId){
     });
     ['bc_name','bc_handle','bc_email','bc_date','bc_time'].forEach(id=>document.getElementById(id).value='');
     msg.style.color='var(--green)';
-    msg.textContent = `✓ New call scheduled for ${l.name} on their existing record — ${fmtCallWhen(calls.find(c=>c.id===leadId))}`;
+    msg.textContent = `✓ New call scheduled for ${l.name} on their existing record — ${fmtCallWhen(calls.find(c=>c.id===leadId)).replace(/<[^>]+>/g,'')}`;
     setTimeout(()=>{msg.style.display='none';},6000);
     renderSalesPage();
     highlightUpcomingCall(leadId);
@@ -3221,7 +3265,7 @@ async function bookOntoExisting(leadId){
 function goToLead(leadId){
   const l = calls.find(c=>c.id===leadId);
   if(!l) return;
-  if(l.callDate && hoursUntilCall(l) > -168){
+  if(l.callDate && hoursUntilCall(l) > -CALL_ARCHIVE_SHOW_DAYS*24){
     highlightUpcomingCall(leadId);
   } else {
     openLeadModal(leadId);
@@ -3264,7 +3308,7 @@ function searchLeads(){
   box.innerHTML = clientNote + `<div style="font-size:11px;color:var(--sub);margin-bottom:6px">${all.length} existing record${all.length>1?'s':''} found — check before logging again:</div>` +
     all.map(m=>{
       const l=m.lead; const ig=normaliseHandle(l.handle||'');
-      const hasCall = l.callDate && hoursUntilCall(l) > -168;
+      const hasCall = l.callDate && hoursUntilCall(l) > -CALL_ARCHIVE_SHOW_DAYS*24;
       return `<div onclick="goToLead('${l.id}')" title="${hasCall?'Go to their scheduled call':'Open this lead\'s record'}"
         style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;cursor:pointer;transition:border-color .15s,background .15s"
         onmouseover="this.style.borderColor='var(--pink)';this.style.background='rgba(233,30,140,0.06)'"
@@ -3282,9 +3326,14 @@ function searchLeads(){
 // onto an existing record it's obvious where that record went.
 function highlightUpcomingCall(leadId){
   const go = () => {
-    const el = document.getElementById('ucall_'+leadId);
+    let el = document.getElementById('ucall_'+leadId);
     if(!el){
-      alert('That call isn\'t in the upcoming list — its date may be more than 7 days past. You can find the lead in the All Leads table below.');
+      // Archived calls sit in a collapsed list — open it and point there.
+      el = document.getElementById('acall_'+leadId);
+      if(el){ const d = el.closest('details'); if(d){ d.open = true; archivedCallsOpen = true; } }
+    }
+    if(!el){
+      alert('That call isn\'t in the call lists — it may have been removed or be more than '+CALL_ARCHIVE_SHOW_DAYS+' days past. You can find the lead in the All Leads table below.');
       return;
     }
     el.scrollIntoView({behavior:'smooth', block:'center'});
@@ -3302,7 +3351,7 @@ function highlightUpcomingCall(leadId){
 async function cancelScheduledCall(leadId){
   const l = calls.find(c=>c.id===leadId);
   if(!l) return;
-  if(!confirm(`Remove the scheduled call for ${l.name}?\n\n${fmtCallWhen(l)}\n\nThe lead record and its history are kept — only the call schedule and its reminders are cleared.`)) return;
+  if(!confirm(`Remove the scheduled call for ${l.name}?\n\n${fmtCallWhen(l).replace(/<[^>]+>/g,'')}\n\nThe lead record and its history are kept — only the call schedule and its reminders are cleared.`)) return;
   try{
     await saveLeadChange(leadId,{callDate:'', callTime:'', reminders:{}});
     renderSalesPage();
@@ -3404,14 +3453,55 @@ async function removeFollowUp(leadId){
   catch(e){ alert('Could not remove it: '+e.message); }
 }
 
+// A lead marked Signed up leaves this list 48 hours after its remind-on date
+// and moves to the Archived list underneath. Worked out on every render, so
+// un-marking Signed brings it straight back. Unsigned reminders behave as
+// before: unsent ones stay until someone acts on them, however overdue, and
+// sent ones stay a week as a record of what went out.
+const FOLLOWUP_SIGNED_HIDE_HOURS = 48;
+function followUpArchived(l){
+  const f = l.followUp;
+  if(!f || !f.dueDate) return false;
+  if(l.signed !== 'yes') return false;
+  const due = new Date(f.dueDate+'T00:00');
+  return !isNaN(due) && (Date.now() - due) >= FOLLOWUP_SIGNED_HIDE_HOURS*3600000;
+}
+let archivedFollowUpsOpen = false;
+function renderArchivedFollowUps(list){
+  const box = document.getElementById('archivedFollowUps');
+  if(!box) return;
+  if(!list.length){ box.innerHTML=''; return; }
+  box.innerHTML = `
+    <details ${archivedFollowUpsOpen?'open':''} ontoggle="archivedFollowUpsOpen=this.open" style="margin-top:6px;border-top:1px solid var(--border);padding-top:10px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--sub);user-select:none">Archived · ${list.length} signed up <span style="opacity:.7">— hidden ${FOLLOWUP_SIGNED_HIDE_HOURS} hours after their reminder date</span></summary>
+      <div style="margin-top:8px">
+        ${list.map(l=>{
+          const f = l.followUp; const ig = normaliseHandle(l.handle||'');
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:5px;font-size:12px">
+            <div>
+              <span style="font-weight:600">${l.name}</span>
+              ${ig?` <a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+              <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">SIGNED</span>
+              <span style="color:var(--sub)"> · remind ${fmtShortDate(f.dueDate)}${f.startDate?` · starts ${fmtShortDate(f.startDate)}`:''}${f.sent?` · sent ${fmtShortDate(f.sentAt)}`:' · not marked sent'}</span>
+            </div>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 9px;border-color:var(--red);color:var(--red)" onclick="removeFollowUp('${l.id}')" title="Remove the reminder entirely — the lead record is kept">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`;
+}
+
 function renderStartFollowUps(){
   const box = document.getElementById('startFollowUps');
   if(!box) return;
   const today = new Date(); today.setHours(0,0,0,0);
+  const withFollowUp = callReminderLeads().filter(l=> l.followUp && l.followUp.dueDate);
+  renderArchivedFollowUps(withFollowUp.filter(followUpArchived)
+    .sort((a,b)=> a.followUp.dueDate < b.followUp.dueDate ? 1 : -1));
   // Keep sent ones visible for a week so there's a record of what went out.
-  const list = callReminderLeads().filter(l=>{
+  const list = withFollowUp.filter(l=>{
     const f = l.followUp;
-    if(!f || !f.dueDate) return false;
+    if(followUpArchived(l)) return false;
     if(!f.sent) return true;
     const sentAt = f.sentAt ? new Date(f.sentAt) : null;
     return !sentAt || (today - sentAt)/86400000 < 7;
@@ -3593,7 +3683,7 @@ async function promptHandle(leadId){
   const l = calls.find(c=>c.id===leadId);
   if(!l) return;
   const current = normaliseHandle(l.handle||'');
-  const v = prompt(`Instagram handle for ${l.name}${l.email?' ('+l.email+')':''}:`+(current?'':'\n\nCalendly bookings don\'t include one, so add it here.'), current);
+  const v = prompt(`Instagram handle for ${l.name}${l.email?' ('+l.email+')':''}:`+(current?'':(l.handleTyped?`\n\nThey typed "${l.handleTyped}" when booking, which isn't a valid handle.`:'\n\nNo handle on record yet, so add it here.')), current || (l.handleTyped||''));
   if(v === null) return;
   const h = normaliseHandle(v);
   if(!h){
@@ -3610,18 +3700,29 @@ async function promptHandle(leadId){
   }catch(e){ alert('Could not save: '+e.message); }
 }
 
+// A call drops out of the reminders 24 hours after its scheduled time and
+// moves to the Archived list underneath. Nothing is stored or deleted — it's
+// worked out from the call date on every render, so when a lead is
+// rescheduled (here, through Book a Call, the lead editor or a new Calendly
+// booking) the record's single call date moves and the lead comes straight
+// back with only the new date. The old slot lives in rescheduleHistory.
+const CALL_ARCHIVE_AFTER_HOURS = 24;
+const CALL_ARCHIVE_SHOW_DAYS = 30;   // how far back the Archived list reaches
+
 function renderUpcomingCalls(){
   const box = document.getElementById('upcomingCalls');
   if(!box) return;
-  // Anything with a scheduled call date. Past calls stay visible for 7 days
-  // so no-shows can still be rescheduled. Leads who already signed are
-  // included too — a re-engagement call still needs its reminders sent.
+  // Leads who already signed are included — a re-engagement call still
+  // needs its reminders sent.
   const now = new Date();
-  const list = callReminderLeads().filter(l=>{
-    if(!l.callDate) return false;
-    const h = hoursUntilCall(l);
-    return h !== null && h > -168;
-  }).sort((a,b)=> callDateTime(a) - callDateTime(b));
+  const withCall = callReminderLeads().filter(l=> l.callDate && hoursUntilCall(l) !== null);
+  const list = withCall
+    .filter(l=> hoursUntilCall(l) > -CALL_ARCHIVE_AFTER_HOURS)
+    .sort((a,b)=> callDateTime(a) - callDateTime(b));
+  const archived = withCall
+    .filter(l=>{ const h = hoursUntilCall(l); return h <= -CALL_ARCHIVE_AFTER_HOURS && h > -CALL_ARCHIVE_SHOW_DAYS*24; })
+    .sort((a,b)=> callDateTime(b) - callDateTime(a));
+  renderArchivedCalls(archived);
 
   document.getElementById('upcomingMeta').textContent =
     list.length ? `${list.length} scheduled · send a DM 24 hours and 1 hour before` : '';
@@ -3664,7 +3765,7 @@ function renderUpcomingCalls(){
               <span style="font-weight:600">${l.name}</span>
               ${ig?`<a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>
               <button onclick="promptHandle('${l.id}')" title="Edit the Instagram handle" style="background:none;border:none;color:var(--sub);cursor:pointer;font-size:11px;padding:0 2px">✎</button>`:''}
-              ${!ig?`<button onclick="promptHandle('${l.id}')" title="No Instagram handle yet — Calendly bookings don't collect one. Click to add it." style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">+ ADD HANDLE</button>`:''}
+              ${!ig?`<button onclick="promptHandle('${l.id}')" title="${l.handleTyped?'They typed &quot;'+l.handleTyped+'&quot; in the Instagram box — not a valid handle. Click to add the right one.':'No Instagram handle yet. Click to add it.'}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">${l.handleTyped?'CHECK HANDLE: '+l.handleTyped:'+ ADD HANDLE'}</button>`:''}
               ${l.source==='Calendly'?`<span title="Came in through the Calendly link" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(92,154,255,0.12);color:#5c9aff;border:1px solid rgba(92,154,255,0.3)">CALENDLY</span>`:''}
               ${calendlyEventTag(l)}
               ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
@@ -3678,7 +3779,7 @@ function renderUpcomingCalls(){
         </div>
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           ${past?`<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="markNoShow('${l.id}')">Mark no-show</button>`:''}
-          <span style="font-size:11px;color:var(--sub)">Reschedule:</span>
+          <span style="font-size:11px;color:var(--sub)" title="Enter the new date and time in Luke's time (Sydney)">Reschedule (Sydney time):</span>
           <input type="date" id="rs_date_${l.id}" class="form-input" style="width:150px;font-size:11px;padding:4px 8px">
           <input type="time" id="rs_time_${l.id}" class="form-input" style="width:110px;font-size:11px;padding:4px 8px">
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;border-color:var(--yellow);color:var(--yellow)" onclick="rescheduleCall('${l.id}')">⟲ Reschedule</button>
@@ -3686,6 +3787,33 @@ function renderUpcomingCalls(){
         </div>
       </div>`;
   }).join('');
+}
+
+// Calls more than 24 hours past, newest first. Collapsed by default; stays
+// open across the 45-second refresh if someone opened it.
+let archivedCallsOpen = false;
+function renderArchivedCalls(list){
+  const box = document.getElementById('archivedCalls');
+  if(!box) return;
+  if(!list.length){ box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <details ${archivedCallsOpen?'open':''} ontoggle="archivedCallsOpen=this.open" style="margin-top:6px;border-top:1px solid var(--border);padding-top:10px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--sub);user-select:none">Archived calls · ${list.length} in the last ${CALL_ARCHIVE_SHOW_DAYS} days <span style="opacity:.7">— more than ${CALL_ARCHIVE_AFTER_HOURS} hours past. Rescheduling brings a lead back up top.</span></summary>
+      <div style="margin-top:8px">
+        ${list.map(l=>{
+          const ig = normaliseHandle(l.handle||'');
+          return `<div id="acall_${l.id}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:5px;font-size:12px;transition:box-shadow .3s,border-color .3s">
+            <div>
+              <span style="font-weight:600">${l.name}</span>
+              ${ig?` <a href="${igUrl(ig)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--pink);text-decoration:none">@${ig}</a>`:''}
+              ${calendlyEventTag(l)}
+              <span style="color:var(--sub)"> · ${fmtCallWhen(l)} · ${leadOutcomeText(l)}</span>
+            </div>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px" onclick="openLeadModal('${l.id}')" title="Open the lead — set a new call date there to bring them back into the reminders">Open lead</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`;
 }
 
 function deleteCall(id){calls=calls.filter(c=>c.id!==id);saveCalls();renderSalesPage();}
