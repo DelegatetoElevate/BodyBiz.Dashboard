@@ -567,6 +567,16 @@ body{visibility:hidden}
     </div>
   </div>
 
+  <!-- Payment Collected (New Clients) — admin only. Outreach never receives
+       client records from the server, so this is empty for them regardless. -->
+  <div class="card admin-only" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">💵 Payment Collected (New Clients)</div>
+      <div class="card-meta">Initial payments from first-time sign-ups, by start date · re-signs excluded · separate from recurring revenue</div>
+    </div>
+    <div class="card-body" id="newClientCash"></div>
+  </div>
+
   <!-- Calendly connection (admin only) -->
   <div class="card admin-only" style="margin-bottom:18px">
     <div class="card-header">
@@ -1193,6 +1203,15 @@ body{visibility:hidden}
         <select class="form-input" id="m_resign">
           <option value="no">No — first time</option><option value="yes">Yes — returning client</option>
         </select></div>
+    </div>
+    <!-- What was actually collected at sign-up. Feeds Payment Collected (New
+         Clients) on the Sales tab; left blank, that section shows an estimate
+         from the billing details instead. -->
+    <div class="form-row">
+      <div class="form-group"><div class="form-label">Initial Payment Collected <span style="opacity:.6;font-weight:400">(in client's currency)</span></div>
+        <input class="form-input" id="m_initial_paid" type="number" step="0.01" min="0" placeholder="Actual amount received at sign-up"></div>
+      <div class="form-group"><div class="form-label">Payment Received Date</div>
+        <input class="form-input" id="m_paid_date" type="date"></div>
     </div>
     <div id="pifFields" style="display: none;">
       <div class="form-row">
@@ -2505,7 +2524,7 @@ function openAddModal(){
     document.getElementById('dncLabel').style.color='';
     document.getElementById('dncLabel').style.fontWeight='';
   }
-  ['m_name','m_instagram','m_end','m_notes','m_pif_amount','m_pif_months','m_upfront_amount','m_weekly_rate','m_weekly_start','m_first_month_amount','m_monthly_rate'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})
+  ['m_name','m_instagram','m_end','m_notes','m_pif_amount','m_pif_months','m_upfront_amount','m_weekly_rate','m_weekly_start','m_first_month_amount','m_monthly_rate','m_initial_paid','m_paid_date'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';})
   document.getElementById('m_upfront_weeks').value='4';
   document.getElementById('m_coach').value='Luke';
   document.getElementById('m_status').value='active';
@@ -2542,6 +2561,8 @@ function openEdit(id){
   document.getElementById('m_first_month_amount').value=c.first_month_amount||'';
   document.getElementById('m_monthly_rate').value=c.monthly_rate||'';
   document.getElementById('m_payment').value=c.payment||'Stripe';
+  document.getElementById('m_initial_paid').value=(c.initial_paid!=null&&c.initial_paid!=='')?c.initial_paid:'';
+  document.getElementById('m_paid_date').value=c.paid_date||'';
   document.getElementById('m_source').value=c.source||'Instagram Inbound';
   document.getElementById('m_resign').value=c.resign||'no';
   document.getElementById('m_reason').value=c.reason||'';
@@ -2577,6 +2598,9 @@ function saveClient(){
     first_month_amount:billing==='monthly_upfront'?(parseFloat(document.getElementById('m_first_month_amount').value)||0):0,
     monthly_rate:billing==='monthly_upfront'?(parseFloat(document.getElementById('m_monthly_rate').value)||0):0,
     payment:document.getElementById('m_payment').value,source:document.getElementById('m_source').value,
+    // Blank means "not entered yet" (null), which is different from a real 0.
+    initial_paid:(v=>v===''?null:Math.max(0,parseFloat(v)||0))(document.getElementById('m_initial_paid').value.trim()),
+    paid_date:document.getElementById('m_paid_date').value||null,
     resign:document.getElementById('m_resign').value,reason:document.getElementById('m_reason').value,
     instagram:normaliseHandle(document.getElementById('m_instagram').value),
     dnc:document.getElementById('m_dnc').checked,
@@ -3917,8 +3941,132 @@ function toggleLead(id,field,val){
 // ============================================================
 // SALES PAGE
 // ============================================================
+// ============================================================
+// PAYMENT COLLECTED (NEW CLIENTS)
+// Cash from first-time sign-ups only, grouped by the month of their start
+// date (payment is taken at the start date). Re-signs are left out — a
+// returning client isn't new business. Deliberately self-contained: nothing
+// here feeds MRR, revenue, LTV or any other total.
+//
+// The figure per client is what admin entered as Initial Payment Collected.
+// Until that's filled in, an estimate from the billing details stands in,
+// shown greyed and marked "est." so it's obvious what still needs confirming.
+// ============================================================
+function isNewSignup(c){ return c && c.resign !== 'yes' && !c.resignedFromId && /^\d{4}-\d{2}/.test(c.start||''); }
+function hasActualInitial(c){ return c.initial_paid !== null && c.initial_paid !== undefined && c.initial_paid !== '' && !isNaN(parseFloat(c.initial_paid)); }
+function estimatedInitial(c){
+  if(isPIF(c)) return +c.pif_amount || 0;
+  if(isWeeklyUpfront(c)) return +c.upfront_amount || 0;
+  if(isMonthlyUpfront(c)) return +c.first_month_amount || 0;
+  return +c.rate || 0;   // monthly: first month · weekly: first week
+}
+function initialPaid(c){ return hasActualInitial(c) ? parseFloat(c.initial_paid) : estimatedInitial(c); }
+const BILLING_SHORT = {monthly:'Monthly', monthly_upfront:'Monthly + upfront', weekly:'Weekly', weekly_upfront:'Weekly + upfront', pif_months:'Paid in full'};
+const ncashOpen = new Set();          // months expanded by the viewer
+let ncashTouched = false;              // until they touch it, the current month starts open
+function toggleNcashMonth(m){ ncashTouched = true; ncashOpen.has(m) ? ncashOpen.delete(m) : ncashOpen.add(m); renderNewClientCash(); }
+
+function renderNewClientCash(){
+  const box = document.getElementById('newClientCash');
+  if(!box) return;
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const thisMonth = `${now.getFullYear()}-${pad(now.getMonth()+1)}`;
+  const first = new Date(now.getFullYear(), now.getMonth()-11, 1);
+  const fromMonth = `${first.getFullYear()}-${pad(first.getMonth()+1)}`;
+  if(!ncashTouched) ncashOpen.add(thisMonth);
+
+  const byMonth = {};
+  clients.filter(isNewSignup).forEach(c=>{
+    const m = c.start.slice(0,7);
+    if(m < fromMonth) return;           // last 12 months, plus any future starts
+    (byMonth[m] = byMonth[m] || []).push(c);
+  });
+  // Always show the current month and the 11 before it, even when empty.
+  for(let i=0;i<12;i++){ const d=new Date(now.getFullYear(), now.getMonth()-i, 1); const k=`${d.getFullYear()}-${pad(d.getMonth()+1)}`; byMonth[k]=byMonth[k]||[]; }
+  const months = Object.keys(byMonth).sort().reverse();
+  const monthLabel = m => { const [y,mo]=m.split('-').map(Number); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
+  const sumAUD = list => list.reduce((s,c)=> s + toAUD(initialPaid(c), c.currency||'AUD'), 0);
+
+  const cur = byMonth[thisMonth] || [];
+  const lm = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const last = byMonth[`${lm.getFullYear()}-${pad(lm.getMonth()+1)}`] || [];
+  const curEst = cur.filter(c=>!hasActualInitial(c)).length;
+
+  const tile = (label, val, sub, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px 14px">
+      <div style="font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em">${label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;color:${color||'var(--white)'}">${val}</div>
+      <div style="font-size:11px;color:var(--sub);margin-top:2px">${sub}</div></div>`;
+
+  const rows = months.map(m=>{
+    const list = byMonth[m].slice().sort((a,b)=> a.start < b.start ? -1 : 1);
+    const est = list.filter(c=>!hasActualInitial(c)).length;
+    const open = ncashOpen.has(m);
+    const future = m > thisMonth;
+    const head = `<tr onclick="toggleNcashMonth('${m}')" style="cursor:pointer">
+        <td style="font-weight:600">${open?'▾':'▸'} ${monthLabel(m)}${m===thisMonth?' <span style="font-size:10px;color:var(--pink);font-weight:700">THIS MONTH</span>':''}${future?' <span style="font-size:10px;color:var(--sub)">UPCOMING STARTS</span>':''}</td>
+        <td>${list.length}</td>
+        <td style="font-weight:700;color:var(--green)">${list.length?fmtAUD(sumAUD(list)):'—'}</td>
+        <td style="font-size:12px;color:${est?'var(--yellow)':'var(--sub)'}">${list.length?(est?`${list.length-est} of ${list.length} confirmed`:'all confirmed'):''}</td>
+      </tr>`;
+    if(!open) return head;
+    const detail = list.length ? list.map(c=>{
+      const actual = hasActualInitial(c);
+      const amt = initialPaid(c);
+      return `<tr style="background:rgba(255,255,255,0.02);font-size:12px">
+        <td style="padding-left:26px"><span style="cursor:pointer" onclick="openEdit('${c.id}')" title="Open client">${c.name}</span>
+          <div style="font-size:10px;color:var(--sub)">starts ${fmtShortDate(c.start)} · ${c.coach||'—'} · ${BILLING_SHORT[c.billing]||c.billing||'—'} · ${c.payment||'—'}</div></td>
+        <td></td>
+        <td>${actual
+            ? `<span style="font-weight:600">${fmtN(amt,c.currency||'AUD')}</span>`
+            : `<span style="color:var(--sub)" title="Estimated from billing details — not yet confirmed">${fmtN(amt,c.currency||'AUD')} <span style="font-size:10px">est.</span></span>`}
+          ${(c.currency||'AUD')!=='AUD'?`<span style="color:var(--sub);font-size:11px"> ≈ ${fmtAUD(toAUD(amt,c.currency))}</span>`:''}</td>
+        <td>${c.paid_date?`<span style="color:var(--sub)">received ${fmtShortDate(c.paid_date)}</span>`:''}
+          <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px;margin-left:6px;${actual?'':'border-color:var(--yellow);color:var(--yellow)'}" onclick="event.stopPropagation();enterInitialPayment('${c.id}')">${actual?'Edit':'Enter actual'}</button></td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="4" style="padding-left:26px;font-size:12px;color:var(--sub)">No new sign-ups this month.</td></tr>`;
+    return head + detail;
+  }).join('');
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px">
+      ${tile('Collected this month', fmtAUD(sumAUD(cur)), `${cur.length} new client${cur.length===1?'':'s'}${curEst?` · ${curEst} estimated`:''}`, 'var(--green)')}
+      ${tile('Last month', fmtAUD(sumAUD(last)), `${last.length} new client${last.length===1?'':'s'}`)}
+      ${tile('Avg per new client', cur.length?fmtAUD(sumAUD(cur)/cur.length):'—', 'this month')}
+    </div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Month</th><th>New clients</th><th>Collected (AUD)</th><th>Amounts</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="font-size:11px;color:var(--sub);margin-top:8px">Grey <em>est.</em> figures come from the client's billing details until the actual amount is entered. Other currencies convert to AUD at today's rate.</div>`;
+}
+
+// Quick entry from the section, without opening the full client form.
+function enterInitialPayment(id){
+  const i = clients.findIndex(c=>c.id===id);
+  if(i<0) return;
+  const c = clients[i];
+  const cx = c.currency||'AUD';
+  const cur = hasActualInitial(c) ? c.initial_paid : '';
+  const v = prompt(`Initial payment collected from ${c.name} (${cx}):\n\nEstimate from their billing: ${fmtN(estimatedInitial(c),cx)}\nLeave blank to go back to the estimate.`, cur);
+  if(v === null) return;
+  const t = String(v).replace(/[^0-9.]/g,'');
+  if(String(v).trim() !== '' && (t === '' || isNaN(parseFloat(t)))){ alert('Enter a number, e.g. 480'); return; }
+  const amount = String(v).trim()==='' ? null : parseFloat(t);
+  let paidDate = c.paid_date || null;
+  if(amount !== null){
+    const d = prompt('Date the payment was received (YYYY-MM-DD). Leave blank if unknown.', c.paid_date || c.start || '');
+    if(d === null) return;
+    if(d.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(d.trim())){ alert('Use the format YYYY-MM-DD.'); return; }
+    paidDate = d.trim() || null;
+  }
+  clients[i] = {...c, initial_paid: amount, paid_date: paidDate};
+  save(); renderNewClientCash();
+}
+
 function renderSalesPage(){
   renderUpcomingCalls();
+  renderNewClientCash();
   renderStartFollowUps();
   // Existing clients' check-in bookings aren't sales activity, so they're out
   // of the counters as well as the lists — otherwise the totals wouldn't
@@ -4479,6 +4627,7 @@ function renderAll(){
   renderCurrencyStrip();renderKPIs();renderRevenueChart();renderCurrencyRevBars();renderMonthlyChurnPct();renderSourceGrid();renderClientTable();
   renderRevenuePage();renderGrowthPage();renderCoachesPage();renderRetentionPage();renderLTVPage();
   renderPulse();
+  renderNewClientCash();
 }
 document.getElementById('headerDate').textContent=new Date().toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 document.getElementById('clientModal').addEventListener('click',function(e){if(e.target===this)closeModal();});
