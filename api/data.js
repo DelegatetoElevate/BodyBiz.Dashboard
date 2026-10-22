@@ -213,6 +213,7 @@ export default async function handler(req, res) {
         'rate', 'currency', 'billing', 'payment',
         'pif_amount', 'pif_months', 'upfront_amount',
         'weekly_rate', 'first_month_amount', 'monthly_rate',
+        'initial_paid', 'paid_date',   // Payment Collected (New Clients) — admin only
       ];
       const filteredClients = (data.clients || [])
         .filter((c) => c.coach === identity.coach)
