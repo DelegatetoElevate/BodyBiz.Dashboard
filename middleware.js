@@ -10,7 +10,12 @@ export const config = {
     // cookie — the gate would bounce it to the login page and the booking
     // would be lost. That endpoint protects itself instead, by verifying
     // the signature Calendly signs each request with.
-    '/((?!login.html|api/login|api/logout|api/calendly$|favicon.ico|_vercel).*)',
+    //
+    // api/gcal is excluded for the same reason: Google Calendar's push pings
+    // and the daily Vercel cron arrive with no cookie. It checks Google's
+    // channel token / the cron secret itself, and requires a login for
+    // everything else.
+    '/((?!login.html|api/login|api/logout|api/calendly$|api/gcal$|favicon.ico|_vercel).*)',
   ],
 };
 

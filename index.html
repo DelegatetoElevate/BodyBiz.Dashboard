@@ -594,6 +594,24 @@ body{visibility:hidden}
     </div>
   </div>
 
+  <!-- Google Calendar connection (admin only) -->
+  <div class="card admin-only" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">Google Calendar Connection</div>
+      <div class="card-meta">Consultations booked on the Google Calendar booking page appear in Upcoming Calls automatically</div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="gcalStatus()">Check connection</button>
+        <button class="btn btn-pink" style="font-size:12px;padding:6px 12px" onclick="gcalConnect()">Connect Google Calendar</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="gcalSyncNow()">Sync now</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="gcalLog()">Recent activity</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px;border-color:var(--red);color:var(--red)" onclick="gcalDisconnect()">Disconnect</button>
+      </div>
+      <div id="gcalStatusBox" style="font-size:12px;margin-top:12px;color:var(--sub)"></div>
+    </div>
+  </div>
+
   <!-- Book a call + upcoming schedule -->
   <div class="card" style="margin-bottom:18px">
     <div class="card-header">
@@ -796,6 +814,8 @@ body{visibility:hidden}
           <option value="Instagram Outbound">IG Outbound</option>
           <option value="Email">Email</option>
           <option value="Referral">Referral</option>
+          <option value="Google Calendar">Google Calendar</option>
+          <option value="Calendly">Calendly</option>
         </select>
         <select class="form-input" id="sl_filterCountry" style="width:130px;font-size:11px;padding:5px 8px" onchange="renderCallsTable()">
           <option value="">All countries</option>
@@ -1390,6 +1410,8 @@ body{visibility:hidden}
           <option value="Instagram Outbound">Instagram Outbound DM</option>
           <option value="Referral">Referral</option>
           <option value="Email">Email</option>
+          <option value="Google Calendar">Google Calendar</option>
+          <option value="Calendly">Calendly</option>
         </select></div>
     </div>
     <div class="form-row">
@@ -3122,7 +3144,7 @@ function callReminderLeads(){ return salesLeads().filter(l=>!l._hideFromCalls); 
 // event type in Calendly should be visible, not silently untagged.
 // ============================================================
 const CALENDLY_EVENT_TAGS = [
-  { match: /first[\s-]*time|consultation|consultaion/i, label: 'Consultation',  color: '#00e5a0' },
+  { match: /first[\s-]*time|consultation|consultaion|discovery|strategy\s*call/i, label: 'Consultation',  color: '#00e5a0' },
   { match: /check[\s-]*in/i,                            label: 'Check-In Call', color: '#8a8a9a' },
 ];
 function calendlyEventTag(l){
@@ -3662,6 +3684,73 @@ async function calendlyLog(){
   }).join('');
 }
 
+// ============================================================
+// GOOGLE CALENDAR CONNECTION (admin only)
+// ============================================================
+const gEsc = v => String(v==null?'':v).replace(/[&<>"]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+async function gcalCall(action){
+  const box = document.getElementById('gcalStatusBox');
+  box.style.color='var(--sub)'; box.textContent='Working…';
+  try{ const r = await fetch('/api/gcal?action='+action); return {d: await r.json(), box}; }
+  catch(e){ box.style.color='var(--red)'; box.textContent='Could not reach the server: '+e.message; return null; }
+}
+async function gcalStatus(){
+  const r = await gcalCall('status'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){ box.style.color='var(--red)'; box.textContent='✗ '+(d.error||'Failed'); return; }
+  const line = (label, val, col) => `<div style="margin-top:4px">${label}: <strong style="color:${col||'var(--white)'}">${val}</strong></div>`;
+  box.innerHTML =
+    line('Calendar', gEsc(d.calendarId||'not set'), d.calendarId?'':'var(--yellow)') +
+    line('Service account', gEsc(d.serviceAccount||'not set'), d.serviceAccount?'':'var(--yellow)') +
+    (d.access ? line('Read access', d.access.ok?'working':'✗ '+gEsc(d.access.error), d.access.ok?'var(--green)':'var(--red)') : '') +
+    line('Live updates', d.connected?`connected · renews automatically (current one runs to ${new Date(d.expires).toLocaleDateString('en-AU')})`:'not connected', d.connected?'var(--green)':'var(--yellow)') +
+    (d.lastSyncAt ? line('Last checked', new Date(d.lastSyncAt).toLocaleString('en-AU')) : '') +
+    (d.missing && d.missing.length ? `<div style="margin-top:6px;color:var(--yellow)">Missing in Vercel: ${d.missing.map(gEsc).join(', ')}</div>` : '');
+}
+async function gcalConnect(){
+  if(!confirm('Connect Google Calendar?\n\nUpcoming consultations already on the booking calendar are imported now, and new bookings will appear in Upcoming Calls within seconds.')) return;
+  const r = await gcalCall('connect'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){ box.style.color='var(--red)'; box.textContent='✗ '+(d.error||(d.sync&&d.sync.error)||'Failed'); return; }
+  box.style.color='var(--green)';
+  box.textContent = `✓ Connected. Checked ${d.sync&&d.sync.events||0} upcoming event(s), ${d.sync&&d.sync.changes||0} booking(s) added or updated. Make a test booking and it should appear in Upcoming Calls within a few seconds.`;
+  pollSharedData({force:true});
+}
+async function gcalSyncNow(){
+  const box = document.getElementById('gcalStatusBox');
+  box.style.color='var(--sub)'; box.textContent='Checking Google Calendar…';
+  try{
+    const d = await (await fetch('/api/gcal?action=sync&force=1')).json();
+    if(d.skipped){ box.style.color='var(--yellow)'; box.textContent = d.skipped==='not connected' ? 'Not connected yet — click Connect Google Calendar first.' : 'Skipped: '+d.skipped; return; }
+    if(!d.ok){ box.style.color='var(--red)'; box.textContent='✗ '+d.error; return; }
+    box.style.color='var(--green)'; box.textContent=`✓ Checked ${d.events} changed event(s), ${d.changes} booking update(s).`;
+    pollSharedData({force:true});
+  }catch(e){ box.style.color='var(--red)'; box.textContent='Could not reach the server: '+e.message; }
+}
+async function gcalLog(){
+  const r = await gcalCall('log'); if(!r) return;
+  const {d, box} = r;
+  if(!d.ok){ box.style.color='var(--red)'; box.textContent='✗ '+d.error; return; }
+  if(!d.attempts.length){ box.style.color='var(--yellow)'; box.textContent='No activity yet.'; return; }
+  box.style.color='var(--sub)';
+  box.innerHTML = d.attempts.map(a=>{
+    const res = a.result||'';
+    const col = /REJECT|ERROR/i.test(res)?'var(--red)':/WARNING/i.test(res)?'var(--yellow)':/^ignored/i.test(res)?'var(--sub)':'var(--green)';
+    return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <span style="color:${col}">${gEsc(res)}</span>${a.lead?' · '+gEsc(a.lead):''}${a.callDate?` · ${gEsc(a.callDate)} ${gEsc(a.callTime||'')}`:''}
+      ${a.handle?` · ${gEsc(a.handle)}`:''}${a.eventType?' '+calendlyEventTag({calendlyEvent:a.eventType}):''}
+      <span style="opacity:.6"> · ${new Date(a.at).toLocaleString('en-AU')}${a.via?' · '+gEsc(a.via):''}</span>
+      ${a.error?`<div style="opacity:.7;font-size:11px">${gEsc(a.error)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+async function gcalDisconnect(){
+  if(!confirm('Disconnect Google Calendar?\n\nNew bookings will stop flowing into the dashboard. Existing leads are unaffected.')) return;
+  const r = await gcalCall('disconnect'); if(!r) return;
+  r.box.style.color = r.d.ok?'var(--yellow)':'var(--red)';
+  r.box.textContent = r.d.ok ? 'Disconnected.' : '✗ '+r.d.error;
+}
+
 async function calendlyStatus(){
   const r = await calendlyCall('status'); if(!r) return;
   const {d, box} = r;
@@ -3791,6 +3880,7 @@ function renderUpcomingCalls(){
               <button onclick="promptHandle('${l.id}')" title="Edit the Instagram handle" style="background:none;border:none;color:var(--sub);cursor:pointer;font-size:11px;padding:0 2px">✎</button>`:''}
               ${!ig?`<button onclick="promptHandle('${l.id}')" title="${l.handleTyped?'They typed &quot;'+l.handleTyped+'&quot; in the Instagram box — not a valid handle. Click to add the right one.':'No Instagram handle yet. Click to add it.'}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.35);cursor:pointer">${l.handleTyped?'CHECK HANDLE: '+l.handleTyped:'+ ADD HANDLE'}</button>`:''}
               ${l.source==='Calendly'?`<span title="Came in through the Calendly link" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(92,154,255,0.12);color:#5c9aff;border:1px solid rgba(92,154,255,0.3)">CALENDLY</span>`:''}
+              ${l.source==='Google Calendar'?`<span title="Booked through the Google Calendar booking page" style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(66,133,244,0.12);color:#6ea8ff;border:1px solid rgba(66,133,244,0.35)">GOOGLE CAL</span>`:''}
               ${calendlyEventTag(l)}
               ${l.signed==='yes'?`<span title="Already signed up — this is a re-engagement call" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(0,229,160,0.12);color:var(--green);border:1px solid rgba(0,229,160,0.3)">✓ SIGNED</span>`:''}
               ${rescheduled?(()=>{const last=(l.rescheduleHistory||[])[rescheduled-1]||{};return `<span title="Rescheduled ${rescheduled} time(s)${last.from?' — previously '+last.from:''}${last.by?' by '+last.by:''}" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:3px;background:rgba(255,193,7,0.12);color:var(--yellow);border:1px solid rgba(255,193,7,0.3)">⟲ RESCHEDULED${rescheduled>1?' ×'+rescheduled:''}${last.at?' '+fmtRelDate(last.at):''}</span>`;})():''}
@@ -5156,6 +5246,15 @@ async function pollSharedData(opts){
   // confirmed yet — that would silently discard it.
   if(_pendingLocalWrite) return;
   try{
+    // Ask the server to check Google Calendar for bookings first, as a safety
+    // net in case a push ping was missed. Throttled server-side to once a
+    // minute; never allowed to hold up the refresh for long.
+    if(currentUser && (currentUser.role==='admin' || currentUser.role==='outreach')){
+      await Promise.race([
+        fetch('/api/gcal?action=sync').catch(()=>null),
+        new Promise(r=>setTimeout(r, 6000)),
+      ]);
+    }
     const [dRes, pRes] = await Promise.all([
       fetch('/api/data'),
       fetch('/api/pulse').catch(()=>null)

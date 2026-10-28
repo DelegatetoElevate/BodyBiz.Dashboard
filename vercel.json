@@ -3,8 +3,17 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/gcal",
+      "schedule": "0 21 * * *"
     }
   ]
 }
