@@ -4243,20 +4243,33 @@ function renderSalesPage(){
 
 // ============================================================
 // CALLS BOOKED BY MONTH
-// Month-by-month breakdown of what happened to each booked call.
-// Grouped by the date the lead was logged, matching the rest of the
-// Sales funnel figures.
+// Each column counts in the month its own event happened:
+//   • Booked (and Showed / No show / Rescheduled, which describe those
+//     calls) — the month the call was booked: bookedAt, stamped by the
+//     server when Booked turns YES. Older leads without it use the month
+//     they were logged, which for Calendly/Google leads is the booking day.
+//   • Sign ups — the month they signed up: signedAt, stamped when Signed
+//     turns YES. Older sign-ups were filled in from their client start date;
+//     any that couldn't be matched to a client fall back to the logged month.
+// So someone who booked in October and signed in November counts as an
+// October booking and a November sign-up.
 // ============================================================
+const bookedMonthOf = c => (c.bookedAt || c.date || '').slice(0,7);
+const signedMonthOf = c => (c.signedAt || c.date || '').slice(0,7);
+
 function renderCallsByMonth(){
   const box = document.getElementById('callsMonthTable');
   if(!box) return;
   const range = document.getElementById('cbm_range')?.value || '6';
 
   // Build the list of months to show
-  const dated = salesLeads().filter(c => c.date);
+  const dated = salesLeads().filter(c => c.date || c.bookedAt || c.signedAt);
   let months = [];
   if(range === 'all'){
-    const keys = [...new Set(dated.map(c => c.date.slice(0,7)))].sort().reverse();
+    const keys = [...new Set([
+      ...dated.filter(c=>c.booked==='yes').map(bookedMonthOf),
+      ...dated.filter(c=>c.signed==='yes').map(signedMonthOf),
+    ].filter(Boolean))].sort().reverse();
     months = keys.map(k => new Date(k + '-01T00:00:00'));
   } else {
     const n = parseInt(range,10);
@@ -4267,10 +4280,9 @@ function renderCallsByMonth(){
   const today = new Date(); today.setHours(0,0,0,0);
   const rows = months.map(m => {
     const key = m.getFullYear() + '-' + String(m.getMonth()+1).padStart(2,'0');
-    const inMonth = dated.filter(c => c.date.slice(0,7) === key);
-    const booked = inMonth.filter(c => c.booked === 'yes');
+    const booked = dated.filter(c => c.booked === 'yes' && bookedMonthOf(c) === key);
     const showed = booked.filter(c => c.showed === 'yes');
-    const signed = booked.filter(c => c.signed === 'yes');
+    const signed = dated.filter(c => c.signed === 'yes' && signedMonthOf(c) === key);
     const rescheduled = booked.filter(c => (c.rescheduleHistory||[]).length > 0);
     // A call still in the future hasn't been missed — only count a no-show
     // once the scheduled time has passed (or where no date was ever set).
@@ -4324,6 +4336,7 @@ function renderCallsByMonth(){
       </tfoot>
     </table>
     </div>
+    <div style="font-size:10px;color:var(--sub);margin-top:8px">Booked, showed and no-shows count in the month the call was booked · sign ups count in the month they signed up.</div>
     ${tot.upcoming>0?`<div style="font-size:10px;color:var(--sub);margin-top:8px">${tot.upcoming} booked call${tot.upcoming===1?'':'s'} still upcoming — not counted as showed or no-show yet.</div>`:''}`;
 }
 
