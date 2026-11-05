@@ -33,6 +33,72 @@ function getIdentity(req) {
   return verifyToken(getCookie(req, 'bb_auth'), process.env.AUTH_SECRET);
 }
 
+// ---- Booked / signed-up dates ----------------------------------------------
+// Same rule in api/data.js, api/leads.js, api/calendly.js and api/gcal.js —
+// keep them in step. bookedAt / signedAt hold the day (Luke's time) a lead
+// was first marked Booked / Signed, so Calls Booked by Month counts each in
+// the month it actually happened. Stamped only on the change to "yes" (never
+// on leads that were already "yes" before these fields existed), kept as-is
+// after that whatever a browser sends, and cleared if set back to "no".
+const lukeToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+const isDay = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+function stampMilestones(prev, next) {
+  for (const [flag, field] of [['booked', 'bookedAt'], ['signed', 'signedAt']]) {
+    if (next[flag] !== 'yes') { delete next[field]; if (field === 'signedAt') delete next.signedAtFrom; continue; }
+    if (prev && prev[flag] === 'yes') {
+      if (isDay(prev[field])) next[field] = prev[field]; else delete next[field];
+    } else if (!prev && isDay(next[field])) {
+      // a brand-new record that arrives with its own date (e.g. a restore) keeps it
+    } else {
+      next[field] = lukeToday();
+      if (field === 'signedAt') delete next.signedAtFrom;
+    }
+  }
+  return next;
+}
+
+// One-off fill-in for sign-ups marked before signedAt existed: use the start
+// date of the client record that lead became (matched by Instagram handle,
+// then name), so a November start counts as a November sign-up even if the
+// lead was logged in October. Runs on read, writes only when it fills
+// something, and never touches a lead that already has a signedAt — so once
+// the old records are done it's a no-op. Unmatched leads stay without one and
+// the dashboard falls back to the month they were logged.
+const _nh = (h) => String(h || '').trim().replace(/^https?:\/\//i, '').replace(/^(www\.|m\.)?instagram\.com\//i, '')
+  .split(/[/?#]/)[0].replace(/^@+/, '').toLowerCase();
+const _nn = (n) => String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+function backfillSignedAt(data) {
+  const calls = Array.isArray(data.calls) ? data.calls : [];
+  const todo = calls.filter((l) => l && l.signed === 'yes' && !isDay(l.signedAt));
+  if (!todo.length) return 0;
+  const byH = new Map(); const byN = new Map();
+  (data.clients || []).forEach((c) => {
+    if (!c || !isDay(String(c.start || '').slice(0, 10))) return;
+    const h = _nh(c.instagram); const n = _nn(c.name);
+    if (h) byH.set(h, [...(byH.get(h) || []), c]);
+    if (n) byN.set(n, [...(byN.get(n) || []), c]);
+  });
+  let filled = 0;
+  todo.forEach((l) => {
+    let cands = _nh(l.handle) ? (byH.get(_nh(l.handle)) || []) : [];
+    if (!cands.length) cands = byN.get(_nn(l.name)) || [];
+    if (!cands.length) return;
+    const sorted = cands.map((c) => String(c.start).slice(0, 10)).sort();
+    // The stint that began when this lead converted: the first start on or
+    // after the date the lead was logged (3 weeks' grace for data-entry lag),
+    // otherwise their most recent start.
+    let pick = sorted[sorted.length - 1];
+    if (isDay(String(l.date || '').slice(0, 10))) {
+      const g = new Date(String(l.date).slice(0, 10) + 'T00:00:00Z'); g.setUTCDate(g.getUTCDate() - 21);
+      const after = sorted.filter((s) => s >= g.toISOString().slice(0, 10));
+      if (after.length) pick = after[0];
+    }
+    l.signedAt = pick; l.signedAtFrom = 'client start date';
+    filled++;
+  });
+  return filled;
+}
+
 async function kvCommand(cmd) {
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -190,6 +256,9 @@ export default async function handler(req, res) {
     try {
       const result = await kvCommand(['GET', KEY]);
       const data = result && result.result ? JSON.parse(result.result) : { clients: [], calls: [] };
+      try {
+        if (backfillSignedAt(data)) await kvCommand(['SET', KEY, JSON.stringify(data)]);
+      } catch (e) { console.error('signedAt backfill skipped:', e); }
 
       if (identity.role === 'admin') {
         return res.status(200).json({ ...data, calls: flagActiveClientLeads(data) });
@@ -271,12 +340,15 @@ export default async function handler(req, res) {
           const serverById = new Map(current.calls.map((c) => [c.id, c]));
           payload.calls = payload.calls.map((lead) => {
             const server = serverById.get(lead.id);
-            if (!server) return lead;              // genuinely new lead
+            if (!server) return stampMilestones(null, { ...lead });   // genuinely new lead
             const merged = { ...lead };
             LEAD_SCHEDULING_FIELDS.forEach((f) => {
               if (server[f] !== undefined) merged[f] = server[f];
             });
-            return merged;
+            // Keep where the fill-in date came from alongside it.
+            if (server.signedAtFrom && merged.signed === 'yes' && server.signed === 'yes') merged.signedAtFrom = server.signedAtFrom;
+            else if (merged.signed !== 'yes' || server.signed !== 'yes') delete merged.signedAtFrom;
+            return stampMilestones(server, merged);
           });
           // Don't drop leads created elsewhere since this browser loaded.
           const sentIds = new Set(payload.calls.map((c) => c.id));

@@ -59,6 +59,30 @@ async function kvCommand(cmd) {
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+// ---- Booked / signed-up dates ----------------------------------------------
+// Same rule in api/data.js, api/leads.js, api/calendly.js and api/gcal.js —
+// keep them in step. bookedAt / signedAt hold the day (Luke's time) a lead
+// was first marked Booked / Signed, so Calls Booked by Month counts each in
+// the month it actually happened. Stamped only on the change to "yes" (never
+// on leads that were already "yes" before these fields existed), kept as-is
+// after that whatever a browser sends, and cleared if set back to "no".
+const lukeToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+const isDay = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+function stampMilestones(prev, next) {
+  for (const [flag, field] of [['booked', 'bookedAt'], ['signed', 'signedAt']]) {
+    if (next[flag] !== 'yes') { delete next[field]; if (field === 'signedAt') delete next.signedAtFrom; continue; }
+    if (prev && prev[flag] === 'yes') {
+      if (isDay(prev[field])) next[field] = prev[field]; else delete next[field];
+    } else if (!prev && isDay(next[field])) {
+      // a brand-new record that arrives with its own date (e.g. a restore) keeps it
+    } else {
+      next[field] = lukeToday();
+      if (field === 'signedAt') delete next.signedAtFrom;
+    }
+  }
+  return next;
+}
+
 export default async function handler(request) {
   const identity = await verifyToken(getCookie(request, 'bb_auth'), process.env.AUTH_SECRET);
   if (!identity) return json({ ok: false, error: 'Not authenticated' }, 401);
@@ -111,6 +135,7 @@ export default async function handler(request) {
         addedAt: new Date().toISOString(),
         addedBy: identity.name,
       };
+      stampMilestones(null, rec);
       data.calls.unshift(rec);
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
       return json({ ok: true, lead: rec });
@@ -119,14 +144,15 @@ export default async function handler(request) {
     if (action === 'update') {
       const idx = data.calls.findIndex((c) => c.id === leadId);
       if (idx === -1) return json({ ok: false, error: 'Lead not found' }, 404);
-      data.calls[idx] = {
-        ...data.calls[idx],
+      const prev = data.calls[idx];
+      data.calls[idx] = stampMilestones(prev, {
+        ...prev,
         ...pick(changes),
         // Last-touched stamp so the dashboard can show when a record was
         // changed — e.g. a call rescheduled today — not just created.
         updatedAt: new Date().toISOString(),
         updatedBy: identity.name,
-      };
+      });
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
       return json({ ok: true, lead: data.calls[idx] });
     }

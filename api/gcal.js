@@ -119,6 +119,30 @@ function clean(v, max) {
     .trim()
     .slice(0, max);
 }
+// ---- Booked / signed-up dates ----------------------------------------------
+// Same rule in api/data.js, api/leads.js, api/calendly.js and api/gcal.js —
+// keep them in step. bookedAt / signedAt hold the day (Luke's time) a lead
+// was first marked Booked / Signed, so Calls Booked by Month counts each in
+// the month it actually happened. Stamped only on the change to "yes" (never
+// on leads that were already "yes" before these fields existed), kept as-is
+// after that whatever a browser sends, and cleared if set back to "no".
+const lukeToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+const isDay = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+function stampMilestones(prev, next) {
+  for (const [flag, field] of [['booked', 'bookedAt'], ['signed', 'signedAt']]) {
+    if (next[flag] !== 'yes') { delete next[field]; if (field === 'signedAt') delete next.signedAtFrom; continue; }
+    if (prev && prev[flag] === 'yes') {
+      if (isDay(prev[field])) next[field] = prev[field]; else delete next[field];
+    } else if (!prev && isDay(next[field])) {
+      // a brand-new record that arrives with its own date (e.g. a restore) keeps it
+    } else {
+      next[field] = lukeToday();
+      if (field === 'signedAt') delete next.signedAtFrom;
+    }
+  }
+  return next;
+}
+
 const normName = (n) =>
   String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 const normHandle = (h) =>
@@ -237,7 +261,7 @@ export function applyEvents(data, events, now = new Date()) {
       const sameSlot = lead.callDate === callDate && lead.callTime === callTime;
       if (sameSlot && lead.gcalEventId === ev.id && (lead.handle || !handle)) continue;   // nothing new
       const moved = lead.callDate && !sameSlot;
-      data.calls[idx] = {
+      data.calls[idx] = stampMilestones(lead, {
         ...lead,
         callDate, callTime, booked: 'yes',
         gcalEventId: ev.id,
@@ -253,7 +277,7 @@ export function applyEvents(data, events, now = new Date()) {
         needsHandle: !(lead.handle || handle),
         handleTyped: (lead.handle || handle) ? '' : (handleTyped || lead.handleTyped || ''),
         updatedAt: stamp, updatedBy: 'Google Calendar',
-      };
+      });
       changed = true;
       log.push({
         result: lead.gcalEventId === ev.id ? (moved ? 'rescheduled' : 'updated booking') : `matched existing lead (by ${how})`,
@@ -279,6 +303,7 @@ export function applyEvents(data, events, now = new Date()) {
       needsHandle: !handle,
       handleTyped,
     };
+    stampMilestones(null, rec);
     data.calls.unshift(rec);
     changed = true;
     log.push({ result: 'created new lead', lead: rec.name, eventType: typeName, callDate, callTime,

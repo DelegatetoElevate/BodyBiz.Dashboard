@@ -115,6 +115,30 @@ const normHandle = (h) =>
 const plausibleHandle = (h) =>
   /^[a-z0-9._]{1,30}$/.test(h) && !/^\.|\.$|\.\./.test(h) && !/^\d+$/.test(h);
 
+// ---- Booked / signed-up dates ----------------------------------------------
+// Same rule in api/data.js, api/leads.js, api/calendly.js and api/gcal.js —
+// keep them in step. bookedAt / signedAt hold the day (Luke's time) a lead
+// was first marked Booked / Signed, so Calls Booked by Month counts each in
+// the month it actually happened. Stamped only on the change to "yes" (never
+// on leads that were already "yes" before these fields existed), kept as-is
+// after that whatever a browser sends, and cleared if set back to "no".
+const lukeToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+const isDay = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+function stampMilestones(prev, next) {
+  for (const [flag, field] of [['booked', 'bookedAt'], ['signed', 'signedAt']]) {
+    if (next[flag] !== 'yes') { delete next[field]; if (field === 'signedAt') delete next.signedAtFrom; continue; }
+    if (prev && prev[flag] === 'yes') {
+      if (isDay(prev[field])) next[field] = prev[field]; else delete next[field];
+    } else if (!prev && isDay(next[field])) {
+      // a brand-new record that arrives with its own date (e.g. a restore) keeps it
+    } else {
+      next[field] = lukeToday();
+      if (field === 'signedAt') delete next.signedAtFrom;
+    }
+  }
+  return next;
+}
+
 const normName = (n) =>
   String(n || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 
@@ -250,7 +274,7 @@ export default async function handler(request) {
 
     if (idx > -1) {
       const lead = data.calls[idx];
-      data.calls[idx] = {
+      data.calls[idx] = stampMilestones(lead, {
         ...lead,
         ...booking,
         email: lead.email || inviteeEmail,
@@ -258,7 +282,7 @@ export default async function handler(request) {
         // Keep the flag only if we still have no handle for them.
         needsHandle: !(lead.handle || handle),
         handleTyped: (lead.handle || handle) ? '' : (handleTyped || lead.handleTyped || ''),
-      };
+      });
       await kvCommand(['SET', KEY, JSON.stringify(data)]);
       await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'matched existing lead', lead: data.calls[idx].name, handle: handle || (handleTyped ? `could not use "${handleTyped}"` : ''), callDate: booking.callDate, callTime: booking.callTime });
       return json({ ok: true, action: 'matched existing lead', lead: data.calls[idx].name });
@@ -282,6 +306,7 @@ export default async function handler(request) {
       handleTyped,
       ...booking,
     };
+    stampMilestones(null, rec);
     data.calls.unshift(rec);
     await kvCommand(['SET', KEY, JSON.stringify(data)]);
     await logAttempt({ event, eventType: eventName, invitee: inviteeName, result: 'created new lead', lead: rec.name, handle: handle || (handleTyped ? `could not use "${handleTyped}"` : ''), callDate: rec.callDate, callTime: rec.callTime });
