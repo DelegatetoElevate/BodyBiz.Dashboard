@@ -491,6 +491,45 @@ body{visibility:hidden}
     </div>
   </div>
 
+  <!-- REVENUE BY COUNTRY — country comes from the client's billing currency -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header" style="flex-wrap:wrap;gap:10px">
+      <div><div class="card-title">Revenue by Country</div>
+        <div class="card-meta" id="ctyMeta">Country is taken from the currency each client pays in</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="cty-seg" role="group" aria-label="Period">
+          <button data-p="week" onclick="setCtyPeriod('week')">Week</button><button data-p="month" onclick="setCtyPeriod('month')">Month</button><button data-p="year" onclick="setCtyPeriod('year')">Year</button>
+        </div>
+        <div class="cty-seg" role="group" aria-label="Measure">
+          <button data-m="revenue" onclick="setCtyMeasure('revenue')">Revenue</button><button data-m="clients" onclick="setCtyMeasure('clients')">Clients</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="cty-wrap">
+        <div style="position:relative;flex:0 0 auto" id="ctyDonut"></div>
+        <div style="flex:1;min-width:240px" id="ctyLegend"></div>
+      </div>
+      <div style="font-size:11px;color:var(--sub);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 8px" id="ctyHistTitle">Last 6 months</div>
+      <div id="ctyHistory"></div>
+      <div style="font-size:11px;color:var(--sub);margin-top:10px" id="ctyNote"></div>
+    </div>
+    <div id="ctyTip" style="position:fixed;pointer-events:none;display:none;z-index:50;background:#22222e;border:1px solid #33334a;border-radius:6px;padding:7px 10px;font-size:12px;color:var(--white);box-shadow:0 6px 20px rgba(0,0,0,.4)"></div>
+  </div>
+  <style>
+    .cty-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+    .cty-seg button{background:transparent;border:0;color:var(--sub);font-size:12px;padding:5px 11px;cursor:pointer;font-family:inherit}
+    .cty-seg button+button{border-left:1px solid var(--border)}
+    .cty-seg button.on{background:var(--pink-dim);color:var(--white)}
+    .cty-wrap{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+    .cty-row{display:grid;grid-template-columns:12px 1fr auto auto auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px}
+    .cty-sw{width:10px;height:10px;border-radius:3px}
+    .cty-hrow{display:grid;grid-template-columns:70px 1fr 90px;gap:10px;align-items:center;margin-bottom:8px;font-size:12px}
+    .cty-bar{display:flex;gap:2px;height:14px;border-radius:4px;overflow:hidden;background:rgba(255,255,255,.04)}
+    .cty-bar span{display:block;height:100%}
+    @media (max-width:560px){.cty-row{grid-template-columns:12px 1fr auto auto}.cty-row .cty-chg{grid-column:2 / -1;text-align:left}}
+  </style>
+
   <!-- PIF clients table -->
   <div class="card">
     <div class="card-header"><div class="card-title">PIF Clients</div><div class="card-meta" id="pifTableMeta"></div></div>
@@ -1205,7 +1244,13 @@ body{visibility:hidden}
         </select></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><div class="form-label">Start Date</div><input class="form-input" id="m_start" type="date" oninput="if(document.getElementById(&#39;m_billing&#39;).value===&#39;weekly_upfront&#39;)calcWeeklySubStart()"></div>
+      <div class="form-group"><div class="form-label">Start Date</div><input class="form-input" id="m_start" type="date" oninput="if(document.getElementById(&#39;m_billing&#39;).value===&#39;weekly_upfront&#39;)calcWeeklySubStart();updateProjectedEnd()"></div>
+      <!-- Worked out, not typed: start + months paid, plus 2 weeks for an early
+           bird re-sign. The churn End Date further down is a separate field. -->
+      <div class="form-group"><div class="form-label">End Date <span style="opacity:.6;font-weight:400">(projected)</span></div>
+        <div class="form-input" id="m_end_proj" style="display:flex;align-items:center;gap:8px;min-height:42px;cursor:default;color:var(--sub)">—</div></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><div class="form-label">Source</div>
         <select class="form-input" id="m_source">
           <option value="Instagram Inbound">Instagram Inbound DM</option>
@@ -1213,17 +1258,23 @@ body{visibility:hidden}
           <option value="Email">Email</option>
           <option value="Referral">Referral</option>
         </select></div>
-    </div>
-    <div class="form-row">
       <div class="form-group"><div class="form-label">Payment Method</div>
         <select class="form-input" id="m_payment">
           <option value="Stripe">Stripe</option><option value="PayPal">PayPal</option><option value="Bank Transfer">Bank Transfer</option>
         </select></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><div class="form-label">Re-signed? (churned before)</div>
         <select class="form-input" id="m_resign">
           <option value="no">No — first time</option><option value="yes">Yes — returning client</option>
         </select></div>
+      <div class="form-group"><div class="form-label">Early Bird Re-sign</div>
+        <label style="display:flex;align-items:center;gap:10px;min-height:42px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="m_early_bird" onchange="updateProjectedEnd()" style="width:18px;height:18px;accent-color:var(--pink)">
+          <span>+2 weeks free access</span>
+        </label></div>
     </div>
+    <div id="m_eb_check" style="display:none;margin:-4px 0 14px;padding:9px 12px;border:1px solid rgba(255,196,0,.35);background:rgba(255,196,0,.08);border-radius:6px;font-size:12px"></div>
     <!-- What was actually collected at sign-up. Feeds Payment Collected (New
          Clients) on the Sales tab; left blank, that section shows an estimate
          from the billing details instead. -->
@@ -1238,7 +1289,7 @@ body{visibility:hidden}
         <div class="form-group"><div class="form-label">Total Amount Paid</div>
           <input class="form-input" id="m_pif_amount" type="number" placeholder="e.g. 1500"></div>
         <div class="form-group"><div class="form-label">Months Covered</div>
-          <input class="form-input" id="m_pif_months" type="number" placeholder="e.g. 6" min="1"></div>
+          <input class="form-input" id="m_pif_months" type="number" placeholder="e.g. 6" min="1" oninput="updateProjectedEnd()"></div>
       </div>
     </div>
     <div id="monthlyUpfrontFields" style="display: none;">
@@ -1379,6 +1430,11 @@ body{visibility:hidden}
         </div>
       </div>
     </div>
+    <div class="form-row full"><div class="form-group">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+        <input type="checkbox" id="rs_early_bird" style="width:18px;height:18px;accent-color:var(--pink)">
+        <span><strong>Early bird re-sign</strong> — +2 weeks free access added to their end date</span>
+      </label></div></div>
     <div class="form-row full"><div class="form-group"><div class="form-label">Notes</div>
       <input class="form-input" id="rs_notes" placeholder="e.g. Returned after 3 months off"></div></div>
     <div class="modal-footer">
@@ -1483,7 +1539,7 @@ function rateDisplay(c){
 }
 function calcMRR_recurring(){return clients.filter(c=>c.status==='active'&&!isPIF(c)).reduce((s,c)=>s+rateAUD(c),0);}
 function pifAmountAUD(c){return isPIF(c)?toAUD(c.pif_amount||0,c.currency||'AUD'):0;}
-function pifExpiryDate(c){
+function pifExpiryDate_unused(c){   // superseded by pifExpiryDate further down
   if(isPIF(c)&&c.pif_months){
     const d=new Date(c.start);d.setMonth(d.getMonth()+(parseInt(c.pif_months)||0));return d.toISOString().slice(0,10);
   }
@@ -1498,6 +1554,7 @@ function calcPIFavg(){const p=clients.filter(c=>isPIF(c));return p.length?Math.r
 // ============================================================
 
 function renderRevenuePage(){
+  try{ renderCountryRevenue(); }catch(e){ console.error('Revenue by Country failed:', e); }
   const recurring=clients.filter(c=>!isPIF(c)&&c.status==='active');
   const pifs=clients.filter(c=>isPIF(c)&&c.status==='active');
   const mrr=calcMRR_recurring();
@@ -2108,6 +2165,178 @@ function renderRevenueChart(){
   ).join('');
 }
 
+// ============================================================
+// REVENUE BY COUNTRY
+// The country is the client's billing currency: AUD Australia, USD United
+// States, CAD Canada, NZD New Zealand, GBP United Kingdom, EUR Europe.
+// Revenue per period follows Total Revenue by Month exactly — recurring
+// clients count their monthly rate for each month they were active on the
+// 1st, paid-in-full clients count their whole payment in the month they
+// started — so the monthly totals here add up to that chart.
+//   Week: recurring at their weekly equivalent if active on the Monday,
+//         PIF in the week they started.
+//   Year: the twelve months added up (the current year to date), PIF in the
+//         year they started.
+// Colours are the currency colours used elsewhere, stepped for contrast on
+// the dark card (checked with the palette validator for colour-blind safety).
+// ============================================================
+const CTY = [
+  {cx:'AUD', name:'Australia',      color:'#5c9aff'},
+  {cx:'USD', name:'United States',  color:'#00b884'},
+  {cx:'CAD', name:'Canada',         color:'#cc9200'},
+  {cx:'EUR', name:'Europe',         color:'#e91e8c'},
+  {cx:'NZD', name:'New Zealand',    color:'#ff5722'},
+  {cx:'GBP', name:'United Kingdom', color:'#a259ff'},
+];
+let ctyPeriod = 'month', ctyMeasure = 'revenue';
+function setCtyPeriod(p){ ctyPeriod = p; renderCountryRevenue(); }
+function setCtyMeasure(m){ ctyMeasure = m; renderCountryRevenue(); }
+
+function ctyActiveOn(c, d){ const s=new Date(c.start), e=c.end?new Date(c.end):new Date(); return s<=d && e>=d; }
+// What one client brought in during a period, in AUD.
+function ctyClientRevenue(c, p){
+  if(!c.start) return 0;
+  const sd = new Date(c.start);
+  if(isPIF(c)) return (sd>=p.from && sd<p.to) ? pifAmountAUD(c) : 0;
+  if(p.kind==='month') return ctyActiveOn(c, p.snap) ? rateAUD(c) : 0;
+  if(p.kind==='week')  return ctyActiveOn(c, p.from) ? rateAUD(c)*12/52 : 0;
+  // year: each month's 1st, up to the period's last month
+  let t = 0;
+  for(let m=0; m<p.months; m++){ const d=new Date(p.from); d.setMonth(m); if(d<=new Date() && ctyActiveOn(c,d)) t += rateAUD(c); }
+  return t;
+}
+function ctyPeriods(kind){
+  const now = new Date(), out = [];
+  if(kind==='month'){
+    getMonthsBack(6).forEach(m=>{
+      const from = new Date(m.getFullYear(), m.getMonth(), 1), to = new Date(m.getFullYear(), m.getMonth()+1, 1);
+      out.push({kind, snap:m, from, to, label:m.toLocaleString('en',{month:'short', year: m.getFullYear()!==now.getFullYear()?'2-digit':undefined}), long:m.toLocaleString('en',{month:'long',year:'numeric'})});
+    });
+  } else if(kind==='week'){
+    const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay()+6)%7));
+    for(let i=5;i>=0;i--){
+      const from = new Date(mon); from.setDate(mon.getDate()-7*i);
+      const to = new Date(from); to.setDate(from.getDate()+7);
+      out.push({kind, from, to, label:from.toLocaleDateString('en-AU',{day:'numeric',month:'short'}), long:'Week of '+from.toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'})});
+    }
+  } else {
+    const first = Math.min(...clients.filter(c=>c.start).map(c=>new Date(c.start).getFullYear()), now.getFullYear());
+    for(let y=Math.max(first, now.getFullYear()-5); y<=now.getFullYear(); y++){
+      const cur = y===now.getFullYear();
+      out.push({kind, from:new Date(y,0,1), to:new Date(y+1,0,1), months: cur ? now.getMonth()+1 : 12,
+        label:String(y)+(cur?' YTD':''), long: cur ? `${y} to date` : String(y)});
+    }
+  }
+  return out;
+}
+// Value per country for a period: A$ revenue, or number of paying clients.
+function ctyTotals(p){
+  const t = {}; CTY.forEach(k=>t[k.cx]=0);
+  clients.forEach(c=>{
+    const cx = CX[c.currency] ? c.currency : 'AUD';
+    const r = ctyClientRevenue(c, p);
+    if(r>0) t[cx] += ctyMeasure==='revenue' ? r : 1;
+  });
+  return t;
+}
+function ctyFmt(v){ return ctyMeasure==='revenue' ? fmtAUD(v) : `${v} client${v===1?'':'s'}`; }
+function ctyTip(e, html){ const t=document.getElementById('ctyTip'); if(!t) return; if(!html){ t.style.display='none'; return; } t.innerHTML=html; t.style.display='block'; t.style.left=Math.min(e.clientX+14, window.innerWidth-220)+'px'; t.style.top=(e.clientY+14)+'px'; }
+
+function renderCountryRevenue(){
+  const donutBox = document.getElementById('ctyDonut');
+  if(!donutBox) return;
+  document.querySelectorAll('.cty-seg [data-p]').forEach(b=>b.classList.toggle('on', b.dataset.p===ctyPeriod));
+  document.querySelectorAll('.cty-seg [data-m]').forEach(b=>b.classList.toggle('on', b.dataset.m===ctyMeasure));
+
+  const periods = ctyPeriods(ctyPeriod);
+  const totals = periods.map(ctyTotals);
+  const cur = totals[totals.length-1] || {};
+  const curP = periods[periods.length-1];
+  // Compare like with like: the year to date against the same months last year.
+  let prev = totals[totals.length-2] || null;
+  if(ctyPeriod==='year' && periods.length>1){
+    const pp = periods[periods.length-2];
+    prev = ctyTotals({...pp, months: curP.months, to: new Date(pp.from.getFullYear(), curP.months, 1)});
+    // PIF in the same window only
+    if(ctyMeasure==='revenue'){
+      const lim = new Date(pp.from.getFullYear(), new Date().getMonth(), new Date().getDate()+1);
+      prev = ctyTotals({...pp, months: curP.months, to: lim});
+    }
+  }
+  const sum = CTY.reduce((s,k)=>s+cur[k.cx],0);
+  const prevWord = {week:'last week', month:'last month', year:'same point last year'}[ctyPeriod];
+
+  // ---- donut ----
+  const R=88, r=58, C=110, gapDeg = sum ? 0.9 : 0;
+  let a = -90, arcs = '';
+  const shown = CTY.filter(k=>cur[k.cx]>0);
+  shown.forEach(k=>{
+    const sweep = cur[k.cx]/sum*360;
+    const a0 = a + (shown.length>1?gapDeg:0), a1 = a + sweep - (shown.length>1?gapDeg:0);
+    a += sweep;
+    const pt = (ang, rad)=>[C+rad*Math.cos(ang*Math.PI/180), C+rad*Math.sin(ang*Math.PI/180)];
+    const large = (a1-a0)>180?1:0;
+    const share = Math.round(cur[k.cx]/sum*1000)/10;
+    const tip = `<strong>${CX[k.cx].flag} ${k.name}</strong><br>${ctyFmt(cur[k.cx])} · ${share}%`;
+    if(shown.length===1){
+      arcs += `<circle cx="${C}" cy="${C}" r="${(R+r)/2}" fill="none" stroke="${k.color}" stroke-width="${R-r}" onmousemove="ctyTip(event,'${tip.replace(/'/g,"&#39;")}')" onmouseleave="ctyTip(event)"/>`;
+    } else {
+      const [x0,y0]=pt(a0,R),[x1,y1]=pt(a1,R),[x2,y2]=pt(a1,r),[x3,y3]=pt(a0,r);
+      arcs += `<path d="M${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} L${x2},${y2} A${r},${r} 0 ${large} 0 ${x3},${y3} Z" fill="${k.color}" style="cursor:default" onmousemove="ctyTip(event,'${tip.replace(/'/g,"&#39;")}')" onmouseleave="ctyTip(event)"/>`;
+    }
+  });
+  donutBox.innerHTML = `<svg width="220" height="220" viewBox="0 0 220 220" role="img" aria-label="${ctyMeasure==='revenue'?'Revenue':'Clients'} by country, ${curP.long}">
+      ${sum ? arcs : `<circle cx="${C}" cy="${C}" r="${(R+r)/2}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="${R-r}"/>`}
+      <text x="${C}" y="${C-4}" text-anchor="middle" fill="#f0f0f5" font-size="20" font-weight="700">${sum?ctyFmt(sum).replace(' clients','').replace(' client',''):'—'}</text>
+      <text x="${C}" y="${C+16}" text-anchor="middle" fill="#888899" font-size="11">${ctyMeasure==='revenue'?'':'paying clients · '}${curP.label}</text>
+    </svg>`;
+
+  // ---- legend with share and change ----
+  document.getElementById('ctyLegend').innerHTML =
+    `<div style="font-size:12px;color:var(--sub);margin-bottom:4px">${curP.long} · change vs ${prevWord}</div>` +
+    CTY.map(k=>{
+      const v = cur[k.cx], pv = prev ? prev[k.cx] : 0;
+      const share = sum ? Math.round(v/sum*1000)/10 : 0;
+      let chg = '<span style="color:var(--sub)">—</span>';
+      if(prev){
+        if(pv>0){ const pct = Math.round((v-pv)/pv*1000)/10;
+          chg = pct===0 ? '<span style="color:var(--sub)">● 0%</span>'
+              : `<span style="color:${pct>0?'var(--green)':'var(--red)'}">${pct>0?'▲':'▼'} ${Math.abs(pct)}%</span>`;
+        } else if(v>0) chg = '<span style="color:var(--green)">▲ new</span>';
+      }
+      return `<div class="cty-row" style="${v?'':'opacity:.45'}">
+        <span class="cty-sw" style="background:${k.color}"></span>
+        <span>${CX[k.cx].flag} ${k.name} <span style="color:var(--sub);font-size:11px">${k.cx}</span></span>
+        <span style="font-weight:600">${ctyFmt(v)}</span>
+        <span style="color:var(--sub);min-width:46px;text-align:right">${share}%</span>
+        <span class="cty-chg" style="font-size:12px;min-width:64px;text-align:right">${chg}</span>
+      </div>`;
+    }).join('');
+
+  // ---- last 6 periods: share of each country ----
+  document.getElementById('ctyHistTitle').textContent = `Last ${periods.length} ${ctyPeriod==='week'?'weeks':ctyPeriod==='month'?'months':'years'} · share by country`;
+  document.getElementById('ctyHistory').innerHTML = periods.map((p,i)=>{
+    const t = totals[i], tot = CTY.reduce((s,k)=>s+t[k.cx],0);
+    const segs = CTY.filter(k=>t[k.cx]>0).map(k=>{
+      const share = Math.round(t[k.cx]/tot*1000)/10;
+      const tip = `<strong>${p.long}</strong><br>${CX[k.cx].flag} ${k.name}: ${ctyFmt(t[k.cx])} · ${share}%`;
+      return `<span style="width:${t[k.cx]/tot*100}%;background:${k.color}" onmousemove="ctyTip(event,'${tip.replace(/'/g,"&#39;")}')" onmouseleave="ctyTip(event)"></span>`;
+    }).join('');
+    const isCur = i===periods.length-1;
+    return `<div class="cty-hrow">
+      <span style="color:${isCur?'var(--white)':'var(--sub)'};${isCur?'font-weight:600':''}">${p.label}</span>
+      <div class="cty-bar">${segs}</div>
+      <span style="text-align:right;color:${isCur?'var(--white)':'var(--sub)'}">${tot?ctyFmt(tot):'—'}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('ctyNote').textContent = ctyMeasure==='revenue'
+    ? (ctyPeriod==='week' ? 'Weekly: recurring clients at their weekly equivalent; paid-in-full payments land in the week the client started.'
+      : ctyPeriod==='year' ? 'Yearly: the months added up (this year to date), with paid-in-full payments in the year the client started. Change compares with the same point last year.'
+      : 'Monthly figures match Total Revenue by Month: recurring rates plus paid-in-full payments in the month the client started.')
+    : 'Clients: everyone who brought in revenue in that period, by the currency they pay in.';
+}
+
 function renderCurrencyRevBars(){
   const data=['AUD','USD','CAD','EUR','NZD','GBP'].map(cx=>({
     cx,aud:clients.filter(c=>c.status==='active'&&(c.currency||'AUD')===cx).reduce((s,c)=>s+rateAUD(c),0)
@@ -2497,14 +2726,14 @@ function renderClientTable(){
     ?list.map(c=>{
       const cx=c.currency||'AUD';const sb=c.status==='active'?'badge-active':c.status==='churned'?'badge-churned':'badge-paused';
       return `<tr onclick="openEdit('${c.id}')">
-        <td style="font-weight:500">${c.name}${isDNC(c)?' '+dncBadge(c):''}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}<div style="margin-top:2px">${igLink(resolveHandle(c))}</div></td>
+        <td style="font-weight:500">${c.name}${isDNC(c)?' '+dncBadge(c):''}${isResign(c)?' '+resignBadge(c):''}${hasReturned(c)?' '+returnBadge(c):''}${c.early_bird?' '+earlyBirdBadge(c):''}<div style="margin-top:2px">${igLink(resolveHandle(c))}</div></td>
         <td>${c.coach}</td><td><span class="badge ${sb}">${c.status}</span></td>
         <td><span class="badge ${cxB[cx]||''}">${CX[cx].flag} ${cx}</span></td>
         <td>${rateDisplay(c)} ${c.billing==='weekly'?'<span style="font-size:10px;color:var(--yellow);background:rgba(255,196,0,0.12);padding:1px 5px;border-radius:2px">WK</span>':c.billing==='pif_months'?'<span style="font-size:10px;color:#a259ff;background:rgba(162,89,255,0.12);padding:1px 5px;border-radius:2px">PIF</span>':c.billing==='weekly_upfront'?(upfrontPhase(c)?'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">UPFRONT</span>':'<span style="font-size:10px;color:var(--orange);background:rgba(255,87,34,0.12);padding:1px 5px;border-radius:2px">WK SUB</span>'):c.billing==='monthly_upfront'?'<span style="font-size:10px;color:#5c9aff;background:rgba(41,121,255,0.12);padding:1px 5px;border-radius:2px">MO+</span>':''}</td>
         <td style="color:var(--sub)">${rateAUDDisplay(c)}</td>
         <td style="color:var(--sub)">${c.source||'—'}</td>
         <td style="color:var(--sub);font-size:11px">${c.payment||'—'}</td>
-        <td style="color:var(--sub);font-size:11px">${c.start}</td>
+        <td style="color:var(--sub);font-size:11px;white-space:nowrap">${c.start}${(()=>{const pe=c.billing==='pif_months'?projectedEnd(c):null;return pe?`<div style="margin-top:2px;color:${c.early_bird?'var(--green)':'var(--sub)'}" title="Ends · ${pe.how}">→ ${ymdLocal(pe.date)}</div>`:'';})()}</td>
         <td>${c.billing==='weekly'?weeksBetween(c.start,c.end||null)+' wks':monthsBetween(c.start,c.end)+' mo'}</td>
         <td style="color:var(--green)">${fmtAUD(totalPaidAUD(c))}</td>
         <td style="color:var(--pink);font-weight:600">${fmtAUD(projLTV(c))}</td>
@@ -2522,6 +2751,7 @@ let editingId=null;
 function togglePIFFields(){
   const v=document.getElementById('m_billing').value;
   document.getElementById('pifFields').style.display=v==='pif_months'?'block':'none';
+  if(typeof updateProjectedEnd==='function') updateProjectedEnd();
   document.getElementById('upfrontFields').style.display=v==='weekly_upfront'?'block':'none';
   document.getElementById('monthlyUpfrontFields').style.display=v==='monthly_upfront'?'block':'none';
   if(v==='weekly_upfront') calcWeeklySubStart();
@@ -2557,6 +2787,7 @@ function openAddModal(){
   document.getElementById('m_payment').value='Stripe';
   document.getElementById('m_source').value='Instagram Inbound';
   document.getElementById('m_resign').value='no';
+  document.getElementById('m_early_bird').checked=false;
   document.getElementById('m_reason').value='';
   document.getElementById('deleteBtn').style.display='none';
   document.getElementById('resignBtn').style.display='none';
@@ -2587,6 +2818,7 @@ function openEdit(id){
   document.getElementById('m_paid_date').value=c.paid_date||'';
   document.getElementById('m_source').value=c.source||'Instagram Inbound';
   document.getElementById('m_resign').value=c.resign||'no';
+  document.getElementById('m_early_bird').checked=!!c.early_bird;
   document.getElementById('m_reason').value=c.reason||'';
   document.getElementById('m_instagram').value=resolveHandle(c)||'';
   const dncEl=document.getElementById('m_dnc');
@@ -2599,7 +2831,7 @@ function openEdit(id){
   if(stampEl) stampEl.textContent=(c.notes&&c.notesUpdatedAt)?`· last updated ${fmtShortDate(c.notesUpdatedAt)}`:'';
   document.getElementById('deleteBtn').style.display='block';
   document.getElementById('resignBtn').style.display=(c.status==='churned'||c.status==='active')?'block':'none';
-  toggleChurnFields();togglePIFFields();
+  toggleChurnFields();togglePIFFields();updateProjectedEnd();
   document.getElementById('clientModal').classList.add('open');
 }
 function closeModal(){document.getElementById('clientModal').classList.remove('open');}
@@ -2624,6 +2856,7 @@ function saveClient(){
     initial_paid:(v=>v===''?null:Math.max(0,parseFloat(v)||0))(document.getElementById('m_initial_paid').value.trim()),
     paid_date:document.getElementById('m_paid_date').value||null,
     resign:document.getElementById('m_resign').value,reason:document.getElementById('m_reason').value,
+    early_bird:document.getElementById('m_early_bird').checked,
     instagram:normaliseHandle(document.getElementById('m_instagram').value),
     dnc:document.getElementById('m_dnc').checked,
     notes:document.getElementById('m_notes').value};
@@ -2635,8 +2868,16 @@ function saveClient(){
   } else {
     data.notesUpdatedAt = prevStamp || null;
   }
-  if(editingId){const i=clients.findIndex(c=>c.id===editingId);if(i>=0)clients[i]={...clients[i],...data};}
-  else clients.push({id:uid(),...data});
+  if(editingId){
+    const i=clients.findIndex(c=>c.id===editingId);
+    if(i>=0){
+      const prev=clients[i];
+      if(prev.initial_paid_aud!=null && (String(prev.initial_paid??'')!==String(data.initial_paid??'') || (prev.currency||'AUD')!==(data.currency||'AUD'))) data.initial_paid_aud=null;
+      Object.assign(data, earlyBirdStamps(prev, data));
+      clients[i]={...prev,...data};
+    }
+  }
+  else clients.push({id:uid(),...data,...earlyBirdStamps(null, data)});
   save();closeModal();renderAll();
 }
 function deleteClient(){
@@ -4051,6 +4292,12 @@ function estimatedInitial(c){
   return +c.rate || 0;   // monthly: first month · weekly: first week
 }
 function initialPaid(c){ return hasActualInitial(c) ? parseFloat(c.initial_paid) : estimatedInitial(c); }
+// Clients paying in another currency: the AUD figure is an estimate at
+// today's exchange rate until Luke enters (or accepts) what actually landed
+// in Stripe. initial_paid_aud holds that finalized AUD amount.
+function isForeignCx(c){ return (c.currency||'AUD') !== 'AUD'; }
+function hasFinalAUD(c){ return isForeignCx(c) && c.initial_paid_aud !== null && c.initial_paid_aud !== undefined && c.initial_paid_aud !== '' && !isNaN(parseFloat(c.initial_paid_aud)); }
+function initialPaidAUD(c){ return hasFinalAUD(c) ? parseFloat(c.initial_paid_aud) : toAUD(initialPaid(c), c.currency||'AUD'); }
 const BILLING_SHORT = {monthly:'Monthly', monthly_upfront:'Monthly + upfront', weekly:'Weekly', weekly_upfront:'Weekly + upfront', pif_months:'Paid in full'};
 const ncashOpen = new Set();          // months expanded by the viewer
 let ncashTouched = false;              // until they touch it, the current month starts open
@@ -4076,7 +4323,7 @@ function renderNewClientCash(){
   for(let i=0;i<12;i++){ const d=new Date(now.getFullYear(), now.getMonth()-i, 1); const k=`${d.getFullYear()}-${pad(d.getMonth()+1)}`; byMonth[k]=byMonth[k]||[]; }
   const months = Object.keys(byMonth).sort().reverse();
   const monthLabel = m => { const [y,mo]=m.split('-').map(Number); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
-  const sumAUD = list => list.reduce((s,c)=> s + toAUD(initialPaid(c), c.currency||'AUD'), 0);
+  const sumAUD = list => list.reduce((s,c)=> s + initialPaidAUD(c), 0);
 
   const cur = byMonth[thisMonth] || [];
   const lm = new Date(now.getFullYear(), now.getMonth()-1, 1);
@@ -4091,13 +4338,14 @@ function renderNewClientCash(){
   const rows = months.map(m=>{
     const list = byMonth[m].slice().sort((a,b)=> a.start < b.start ? -1 : 1);
     const est = list.filter(c=>!hasActualInitial(c)).length;
+    const audOpen = list.filter(c=>isForeignCx(c) && !hasFinalAUD(c)).length;
     const open = ncashOpen.has(m);
     const future = m > thisMonth;
     const head = `<tr onclick="toggleNcashMonth('${m}')" style="cursor:pointer">
         <td style="font-weight:600">${open?'▾':'▸'} ${monthLabel(m)}${m===thisMonth?' <span style="font-size:10px;color:var(--pink);font-weight:700">THIS MONTH</span>':''}${future?' <span style="font-size:10px;color:var(--sub)">UPCOMING STARTS</span>':''}</td>
         <td>${list.length}</td>
         <td style="font-weight:700;color:var(--green)">${list.length?fmtAUD(sumAUD(list)):'—'}</td>
-        <td style="font-size:12px;color:${est?'var(--yellow)':'var(--sub)'}">${list.length?(est?`${list.length-est} of ${list.length} confirmed`:'all confirmed'):''}</td>
+        <td style="font-size:12px;color:${est||audOpen?'var(--yellow)':'var(--sub)'}">${list.length?(est?`${list.length-est} of ${list.length} confirmed`:'all confirmed'):''}${audOpen?` · ${audOpen} AUD to finalize`:''}</td>
       </tr>`;
     if(!open) return head;
     const detail = list.length ? list.map(c=>{
@@ -4110,7 +4358,10 @@ function renderNewClientCash(){
         <td>${actual
             ? `<span style="font-weight:600">${fmtN(amt,c.currency||'AUD')}</span>`
             : `<span style="color:var(--sub)" title="Estimated from billing details — not yet confirmed">${fmtN(amt,c.currency||'AUD')} <span style="font-size:10px">est.</span></span>`}
-          ${(c.currency||'AUD')!=='AUD'?`<span style="color:var(--sub);font-size:11px"> ≈ ${fmtAUD(toAUD(amt,c.currency))}</span>`:''}</td>
+          ${isForeignCx(c) ? (hasFinalAUD(c)
+            ? `<span role="button" tabindex="0" onclick="event.stopPropagation();editAudAmount('${c.id}')" title="AUD received in Stripe — finalized. Click to change." style="cursor:pointer;color:var(--green);font-size:11px;font-weight:600;white-space:nowrap"> = ${fmtAUD(parseFloat(c.initial_paid_aud))} ✓ <span style="opacity:.7">✎</span></span>`
+            : `<span role="button" tabindex="0" onclick="event.stopPropagation();editAudAmount('${c.id}')" title="Estimated at today's exchange rate. Click to enter the AUD amount that landed in Stripe." style="cursor:pointer;color:var(--sub);font-size:11px;white-space:nowrap;border-bottom:1px dashed rgba(136,136,153,.6)"> ≈ ${fmtAUD(toAUD(amt,c.currency))} ✎</span>
+               <button class="btn btn-ghost" style="font-size:9px;padding:1px 6px;margin-left:4px;border-color:var(--green);color:var(--green)" onclick="event.stopPropagation();finalizeAud('${c.id}')" title="The estimate matches Stripe — lock it in as the final AUD amount">Finalize amount</button>`) : ''}</td>
         <td>${c.paid_date?`<span style="color:var(--sub)">received ${fmtShortDate(c.paid_date)}</span>`:''}
           <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px;margin-left:6px;${actual?'':'border-color:var(--yellow);color:var(--yellow)'}" onclick="event.stopPropagation();enterInitialPayment('${c.id}')">${actual?'Edit':'Enter actual'}</button></td>
       </tr>`;
@@ -4128,7 +4379,7 @@ function renderNewClientCash(){
       <thead><tr><th>Month</th><th>New clients</th><th>Collected (AUD)</th><th>Amounts</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div style="font-size:11px;color:var(--sub);margin-top:8px">Grey <em>est.</em> figures come from the client's billing details until the actual amount is entered. Other currencies convert to AUD at today's rate.</div>`;
+    <div style="font-size:11px;color:var(--sub);margin-top:8px">Grey <em>est.</em> figures come from the client's billing details until the actual amount is entered. For other currencies, the grey ≈ A$ figure is today's exchange rate — click it to enter what landed in Stripe, or <strong>Finalize amount</strong> if it already matches. Finalized AUD shows green and is what the totals use.</div>`;
 }
 
 // Quick entry from the section, without opening the full client form.
@@ -4150,7 +4401,36 @@ function enterInitialPayment(id){
     if(d.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(d.trim())){ alert('Use the format YYYY-MM-DD.'); return; }
     paidDate = d.trim() || null;
   }
-  clients[i] = {...c, initial_paid: amount, paid_date: paidDate};
+  // A changed amount means any finalized AUD figure no longer matches it.
+  const keepAud = (amount === (hasActualInitial(c) ? parseFloat(c.initial_paid) : null));
+  clients[i] = {...c, initial_paid: amount, paid_date: paidDate, initial_paid_aud: keepAud ? (c.initial_paid_aud ?? null) : null};
+  save(); renderNewClientCash();
+}
+
+// Enter the AUD amount that actually landed in Stripe for a foreign-currency
+// payment. Blank goes back to the exchange-rate estimate.
+function editAudAmount(id){
+  const i = clients.findIndex(c=>c.id===id);
+  if(i<0) return;
+  const c = clients[i];
+  const est = Math.round(toAUD(initialPaid(c), c.currency||'AUD')*100)/100;
+  const cur = hasFinalAUD(c) ? c.initial_paid_aud : est;
+  const v = prompt(`AUD received in Stripe for ${c.name}\n(${fmtN(initialPaid(c), c.currency)} at today's rate ≈ ${fmtAUD(est)})\n\nLeave blank to go back to the estimate.`, cur);
+  if(v === null) return;
+  if(String(v).trim() === ''){ clients[i] = {...c, initial_paid_aud: null}; save(); renderNewClientCash(); return; }
+  const n = parseFloat(String(v).replace(/[^0-9.]/g,''));
+  if(isNaN(n) || n < 0){ alert('Enter the AUD amount as a number, e.g. 3540.25'); return; }
+  clients[i] = {...c, initial_paid_aud: Math.round(n*100)/100};
+  save(); renderNewClientCash();
+}
+// The estimate already matches Stripe — lock it in.
+function finalizeAud(id){
+  const i = clients.findIndex(c=>c.id===id);
+  if(i<0) return;
+  const c = clients[i];
+  const est = Math.round(toAUD(initialPaid(c), c.currency||'AUD')*100)/100;
+  if(!confirm(`Finalize ${c.name}'s payment as ${fmtAUD(est)}?\n\nOnly do this if it matches what landed in Stripe. You can still change it later by clicking the amount.`)) return;
+  clients[i] = {...c, initial_paid_aud: est};
   save(); renderNewClientCash();
 }
 
@@ -4751,6 +5031,7 @@ function openResignModal(){
   if(!c)return;
   resigningFromId=editingId;
   closeModal();
+  const ebBox=document.getElementById('rs_early_bird'); if(ebBox) ebBox.checked=false;
   document.getElementById('resignClientName').textContent=c.name;
   const descEl=document.getElementById('resignModalDesc');
   if(descEl){
@@ -4858,11 +5139,13 @@ function saveResign(){
     dnc:!!orig.dnc,
     resign:'yes',
     resignedFromId:resigningFromId,
+    early_bird:!!document.getElementById('rs_early_bird').checked,
     reason:'',
     notes:buildResignNotes(orig, document.getElementById('rs_notes').value),
     notesUpdatedAt:(document.getElementById('rs_notes').value || orig.notes)
       ? new Date().toISOString().slice(0,10) : null,
   };
+  Object.assign(newClient, earlyBirdStamps(null, newClient));
   clients.push(newClient);
   save();
   closeResignModal();
@@ -4909,15 +5192,108 @@ const TP_PIF_KEY = 'pif_renewal';
 const CALENDLY = 'https://calendly.com/bodybiz-team/body-biz-coaching-call';
 const TP_PIF_LEAD_DAYS = 14;
 
+// End of a paid-in-full block: start + months paid, plus 2 weeks for an
+// early bird re-sign. The PIF renewal touch point and the projected End Date
+// both come from here, so the extra weeks move the renewal reminder too.
+const EARLY_BIRD_DAYS = 14;
 function pifExpiryDate(c){
   if(!c || c.billing !== 'pif_months') return null;
   const months = parseInt(c.pif_months) || 0;
   if(!months || !c.start) return null;
   const d = new Date(...c.start.split('-').map(Number).map((v,i)=>i===1?v-1:v));
   d.setMonth(d.getMonth() + months);
+  if(c.early_bird) d.setDate(d.getDate() + EARLY_BIRD_DAYS);
   d.setHours(0,0,0,0);
   return d;
 }
+
+// ============================================================
+// EARLY BIRD RE-SIGN
+// Luke gives +2 weeks of access to people who re-sign early. Ticking the box
+// pushes the projected End Date (and the PIF renewal reminder) out 2 weeks.
+// Two days after it's ticked, the client is flagged CHECK END DATE until
+// someone confirms the end date in CoachVault matches. The CoachVault
+// connection only exposes training blocks, not access end dates, so that
+// comparison is done by eye.
+// ============================================================
+const EB_CHECK_AFTER_DAYS = 2;
+const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+function projectedEnd(c){
+  if(!c) return null;
+  if(c.billing==='pif_months'){
+    const d = pifExpiryDate(c);
+    const m = parseInt(c.pif_months);
+    return d ? {date:d, how:`${m} month${m===1?'':'s'}${c.early_bird?' + 2 weeks early bird':''}`} : null;
+  }
+  if(c.end) return {date:new Date(...c.end.split('-').map(Number).map((v,i)=>i===1?v-1:v)), how:'ended'};
+  return null;
+}
+function fmtLongDate(d){ return d.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}); }
+// Stamps kept alongside the toggle: when it was turned on, and when the end
+// date was confirmed. A change to anything the end date depends on clears
+// the confirmation so it's checked again.
+function earlyBirdStamps(prev, next){
+  const out = {};
+  if(!next.early_bird){ out.early_bird_at = null; out.early_bird_checked = null; return out; }
+  const wasOn = prev && prev.early_bird;
+  out.early_bird_at = wasOn && prev.early_bird_at ? prev.early_bird_at : ymdLocal(new Date());
+  const sameBasis = wasOn && prev.start===next.start && String(prev.pif_months||'')===String(next.pif_months||'') && prev.billing===next.billing;
+  out.early_bird_checked = sameBasis ? (prev.early_bird_checked || null) : null;
+  return out;
+}
+function earlyBirdNeedsCheck(c){
+  if(!c || !c.early_bird || c.early_bird_checked || !c.early_bird_at) return false;
+  const due = new Date(c.early_bird_at+'T00:00'); due.setDate(due.getDate()+EB_CHECK_AFTER_DAYS);
+  return new Date() >= due;
+}
+function earlyBirdBadge(c){
+  if(!c || !c.early_bird) return '';
+  if(earlyBirdNeedsCheck(c)){
+    const pe = projectedEnd(c);
+    return `<span title="Early bird re-sign: check CoachVault shows access ending ${pe?fmtLongDate(pe.date):'on the projected date'}, then confirm it in the client's popup" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(255,196,0,0.12);color:var(--yellow);border:1px solid rgba(255,196,0,0.35);white-space:nowrap">CHECK END DATE</span>`;
+  }
+  return `<span title="Early bird re-sign: +2 weeks free access" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;background:rgba(0,229,160,0.10);color:var(--green);border:1px solid rgba(0,229,160,0.3);white-space:nowrap">EARLY BIRD +2W</span>`;
+}
+function confirmEarlyBirdEnd(){
+  if(!editingId) return;
+  const i = clients.findIndex(c=>c.id===editingId);
+  if(i<0) return;
+  clients[i] = {...clients[i], early_bird_checked: ymdLocal(new Date())};
+  save(); updateProjectedEnd(); renderAll();
+}
+// Live preview in the popup, from what's currently filled in.
+function updateProjectedEnd(){
+  const box = document.getElementById('m_end_proj');
+  if(!box) return;
+  const draft = {
+    billing: document.getElementById('m_billing').value,
+    start: document.getElementById('m_start').value,
+    pif_months: document.getElementById('m_pif_months').value,
+    end: document.getElementById('m_end').value || null,
+    early_bird: document.getElementById('m_early_bird').checked,
+  };
+  const pe = projectedEnd(draft);
+  if(pe){
+    box.innerHTML = `<span style="color:var(--white);font-weight:600">${fmtLongDate(pe.date)}</span><span style="font-size:11px">${pe.how}</span>`;
+  } else {
+    box.innerHTML = draft.early_bird
+      ? `<span>Ongoing</span><span style="font-size:11px;color:var(--yellow)">+2 weeks only moves the date for paid in full</span>`
+      : `<span>Ongoing</span>`;
+  }
+  // The 2-day check, for the saved record
+  const chk = document.getElementById('m_eb_check');
+  const c = editingId ? clients.find(x=>x.id===editingId) : null;
+  if(!chk) return;
+  chk.style.borderColor=''; chk.style.background='';
+  if(c && c.early_bird && draft.early_bird && pe && earlyBirdNeedsCheck(c)){
+    chk.style.display='block';
+    chk.innerHTML = `⚠️ Early bird re-sign: check CoachVault shows access ending <strong>${fmtLongDate(pe.date)}</strong>. <button class="btn btn-ghost" style="font-size:11px;padding:2px 10px;margin-left:6px;border-color:var(--green);color:var(--green)" onclick="confirmEarlyBirdEnd()">✓ Matches CoachVault</button>`;
+  } else if(c && c.early_bird && draft.early_bird && c.early_bird_checked){
+    chk.style.display='block'; chk.style.borderColor='rgba(0,229,160,.3)'; chk.style.background='rgba(0,229,160,.06)';
+    chk.innerHTML = `✓ End date checked against CoachVault on ${fmtShortDate(c.early_bird_checked)}.`;
+  } else { chk.style.display='none'; }
+}
+
 const TP_WINDOW = 2; // days either side counts as "due today"
 
 const TP_TEMPLATES = {
